@@ -384,6 +384,52 @@ function getTerm(id){
 function isBrowserId(id){return id==='browser'||String(id).startsWith('browser-');}
 function browserIconId(id){return isBrowserId(id)?'browser':id;}
 
+
+function wireWindowResize(element, winId) {
+  const handle = element.querySelector('.window-resize-handle');
+  if (!handle || handle._nbResize) return;
+  handle._nbResize = true;
+  let startY = 0, startH = 0, startX = 0, startW = 0, active = false;
+  const onDown = (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    active = true;
+    const t = ev.touches ? ev.touches[0] : ev;
+    startY = t.clientY;
+    startX = t.clientX;
+    startH = element.offsetHeight;
+    startW = element.offsetWidth;
+    element.classList.add('is-resizing');
+  };
+  const onMove = (ev) => {
+    if (!active) return;
+    const t = ev.touches ? ev.touches[0] : ev;
+    if (!t) return;
+    const dy = t.clientY - startY;
+    const dx = t.clientX - startX;
+    const area = $('desktopWorkspace');
+    const maxH = (area?.clientHeight || window.innerHeight) - 20;
+    const maxW = (area?.clientWidth || window.innerWidth) - 16;
+    const nh = Math.max(160, Math.min(maxH, startH + dy));
+    const nw = Math.max(220, Math.min(maxW, startW + dx));
+    element.style.height = nh + 'px';
+    element.style.width = nw + 'px';
+    const win = state.opened.get(winId);
+    if (win) { win.height = nh; win.width = nw; }
+  };
+  const onUp = () => {
+    if (!active) return;
+    active = false;
+    element.classList.remove('is-resizing');
+  };
+  handle.addEventListener('pointerdown', onDown);
+  window.addEventListener('pointermove', onMove);
+  window.addEventListener('pointerup', onUp);
+  handle.addEventListener('touchstart', onDown, { passive: false });
+  window.addEventListener('touchmove', onMove, { passive: false });
+  window.addEventListener('touchend', onUp);
+}
+
 function openApp(id) {
   // Each Terminal / Browser launch creates a NEW independent window.
   if(id==='terminal'){
@@ -425,6 +471,7 @@ function openApp(id) {
   element.className=`app-window${isTerm?' app-window-terminal':''}${isBrowserId(id)?' app-window-browser':''}`;
   element.dataset.window=id;
   element.setAttribute('role','dialog');
+  element.classList.add('is-resizable');
   element.setAttribute('aria-label',title);
   element.style.width=`${width}px`;
   element.style.height=`${height}px`;
@@ -489,22 +536,36 @@ function wireWindow(id,element) {
   const rz=element.querySelector('[data-resize]');
   if(rz){
     rz.addEventListener('pointerdown',e=>{
-      if(state.opened.get(id)?.maximized||e.button!==0)return;
+      if(state.opened.get(id)?.maximized) return;
+      if(e.pointerType === 'mouse' && e.button !== 0) return;
       e.stopPropagation();
       const rect=element.getBoundingClientRect();
       state.drag={id,pointerId:e.pointerId,resize:true,startW:rect.width,startH:rect.height,sx:e.clientX,sy:e.clientY};
+      element.classList.add('is-resizing');
       try{rz.setPointerCapture(e.pointerId);}catch{}
       focusWindow(id);e.preventDefault();
     });
     rz.addEventListener('pointermove',e=>{
       const d=state.drag;if(!d||d.id!==id||!d.resize||d.pointerId!==e.pointerId)return;
       const area=$('desktopWorkspace');
-      const w=Math.max(300,Math.min(area.clientWidth-8,d.startW+(e.clientX-d.sx)));
-      const h=Math.max(200,Math.min(area.clientHeight-8,d.startH+(e.clientY-d.sy)));
+      const maxW = Math.max(200, (area?.clientWidth || window.innerWidth) - 8);
+      const maxH = Math.max(160, (area?.clientHeight || window.innerHeight) - 8);
+      const w=Math.max(200,Math.min(maxW,d.startW+(e.clientX-d.sx)));
+      const h=Math.max(150,Math.min(maxH,d.startH+(e.clientY-d.sy)));
       element.style.width=`${w}px`;element.style.height=`${h}px`;
-      const win=state.opened.get(id);if(win){win.width=w;win.height=h;}clampWindowRect(element,win);
+      const win=state.opened.get(id);if(win){win.width=w;win.height=h;}
+      try{clampWindowRect(element,win);}catch{}
     });
-    rz.addEventListener('pointerup',stop);rz.addEventListener('pointercancel',stop);rz.addEventListener('lostpointercapture',stop);
+    const endRz=(e)=>{
+      if(state.drag?.id===id && state.drag?.resize) {
+        state.drag=null;
+        element.classList.remove('is-resizing');
+      }
+      try{stop(e);}catch{}
+    };
+    rz.addEventListener('pointerup',endRz);
+    rz.addEventListener('pointercancel',endRz);
+    rz.addEventListener('lostpointercapture',endRz);
   }
 }
 function focusWindow(id) {
@@ -1362,6 +1423,17 @@ function scrollTerminalBottom(termId, force = false) {
 }
 
 
+function resolvePluginId(rawId) {
+  const q = String(rawId || '').trim().toLowerCase();
+  if (!q) return null;
+  const installed = (state.game?.computer?.installedPlugins) || [];
+  const hitInst = installed.find(id => String(id).toLowerCase() === q);
+  if (hitInst) return hitInst;
+  const all = (typeof PLUGINS !== 'undefined' && Array.isArray(PLUGINS)) ? PLUGINS : [];
+  const hit = all.find(p => String(p.id).toLowerCase() === q || String(p.name || '').toLowerCase() === q);
+  return hit ? hit.id : null;
+}
+
 async function runTerminalCommand(termId, raw) {
   const term = getTerm(termId);
   if (!term) return;
@@ -1388,7 +1460,7 @@ async function runTerminalCommand(termId, raw) {
     }
     term.busy = true;
     try {
-      const result = await runPluginShellCommand(state.game, term.plugin, cmd, Date.now());
+      const result = await runPluginShellCommand(state.game, term.plugin, cmd.toLowerCase(), Date.now());
       (result && result.lines || []).forEach(l => termAdd(termId, typeof l === 'string' ? l : (l.text || ''), (l && l.type) || ''));
       if (result && result.clear) clearTerminalView(termId);
       if (result && (result.closePhoneLab || result.clearPhone)) {
@@ -1420,13 +1492,25 @@ async function runTerminalCommand(termId, raw) {
     return;
   }
   if (c0 === 'plugins' || c0 === 'plugin') {
-    const list = (state.game.computer && state.game.computer.installedPlugins) || [];
-    termAdd(termId, 'Installed:', 'green');
-    list.forEach(id => {
-      const p = getPlugin(id);
-      termAdd(termId, '  ' + id + (p ? ' — ' + p.name : ''), 'muted');
+    const installed = new Set((state.game.computer && state.game.computer.installedPlugins) || []);
+    const all = (typeof PLUGINS !== 'undefined' && Array.isArray(PLUGINS)) ? PLUGINS : [];
+    termAdd(termId, '┌─ PLUGINS ─────────────────────────', 'green');
+    termAdd(termId, '│ id                 status     name', 'muted');
+    termAdd(termId, '├────────────────────────────────────', 'muted');
+    const rows = all.length ? all : [...installed].map(id => ({ id, name: id }));
+    rows.forEach(p => {
+      const id = p.id || p;
+      const name = p.name || (getPlugin(id)?.name) || id;
+      const locked = typeof isPluginLocked === 'function' && isPluginLocked(id);
+      const on = installed.has(id);
+      let status, typ;
+      if (locked) { status = '[LOCKED]  '; typ = 'error'; }
+      else if (on) { status = '[ON]      '; typ = 'green'; }
+      else { status = '[OFF]     '; typ = 'muted'; }
+      const idPad = (id + '                    ').slice(0, 18);
+      termAdd(termId, '│ ' + idPad + ' ' + status + ' ' + name, typ);
     });
-    if (!list.length) termAdd(termId, '  (none)', 'muted');
+    termAdd(termId, '└─ run <id> · locked = в разработке', 'muted');
     return;
   }
   if (c0 === 'status') {
@@ -1437,15 +1521,19 @@ async function runTerminalCommand(termId, raw) {
   }
   if (c0 === 'run' || c0 === 'exec') {
     if (!arg1) { termAdd(termId, 'usage: run <plugin-id>', 'error'); return; }
-    const installed = (state.game.computer.installedPlugins || []).includes(arg1);
-    if (!installed) { termAdd(termId, 'not installed: ' + arg1, 'error'); return; }
-    if (typeof isPluginLocked === 'function' && isPluginLocked(arg1)) {
-      termAdd(termId, 'plugin locked: ' + arg1, 'error'); return;
+    const pid = resolvePluginId(arg1) || arg1;
+    const installedList = state.game.computer.installedPlugins || [];
+    const installed = installedList.some(id => String(id).toLowerCase() === String(pid).toLowerCase())
+      || installedList.some(id => String(id).toLowerCase() === String(arg1).toLowerCase());
+    const realId = resolvePluginId(arg1) || installedList.find(id => String(id).toLowerCase() === String(arg1).toLowerCase()) || pid;
+    if (!installed) { termAdd(termId, 'not installed: ' + arg1 + ' (plugins)', 'error'); return; }
+    if (typeof isPluginLocked === 'function' && isPluginLocked(realId)) {
+      termAdd(termId, 'plugin locked / в разработке: ' + realId, 'error'); return;
     }
     term.busy = true;
     try {
-      term.plugin = arg1;
-      await enterPluginWorkspace(termId, arg1);
+      term.plugin = realId;
+      await enterPluginWorkspace(termId, realId);
     } catch (e) {
       termAdd(termId, String(e.message || e), 'error');
       term.plugin = null;
@@ -2362,6 +2450,7 @@ function runNbsAction(action) {
 }
 
 function handleAction(action,el) {
+  if(action==='noop') return;
   const id=el.dataset.id,app=el.dataset.app,site=el.dataset.site,part=el.dataset.part;
   switch(action){
     case 'bank-npc-login':{

@@ -98,7 +98,7 @@ code{font-family:var(--mono);color:#c5d3dc}
 .terminal-output div{user-select:text;-webkit-user-select:text}
 
 /* Window pin + resize */
-.window-resize{position:absolute;right:0;bottom:0;width:16px;height:16px;cursor:nwse-resize;background:linear-gradient(135deg,transparent 50%,#3a5a70 50%);z-index:5}
+.window-resize{position:absolute;right:0;bottom:0;width:28px;height:28px;cursor:nwse-resize;background:linear-gradient(135deg,transparent 42%,#5a7a88 42%,#5a7a88 48%,transparent 48%,transparent 58%,#5a7a88 58%,#5a7a88 64%,transparent 64%,transparent 74%,#8ab 74%,#8ab 82%,transparent 82%);z-index:30;touch-action:none;opacity:.9}
 .app-window.is-pinned{border-color:#c9a227}
 .app-window.is-pinned .pin-btn.is-on,.pin-btn.is-on{color:#e2b657;filter:none}
 .pin-btn{font-size:11px;opacity:.75}
@@ -1119,3 +1119,16 @@ html,body{background:#0a0a0a!important;font-size:12px!important}
 .nb-term .info{font-size:9.5px!important;line-height:1.45}
 .nb-term .progress{height:12px;margin-top:6px;max-width:200px}
 .nb-term-titlebar{flex:0 0 28px;height:28px;font-size:10px}
+
+.window-resize-handle{
+  position:absolute; right:0; bottom:0; width:22px; height:22px;
+  cursor:nwse-resize; z-index:20;
+  background:
+    linear-gradient(135deg, transparent 50%, #5a6a72 50%, #5a6a72 55%, transparent 55%),
+    linear-gradient(135deg, transparent 65%, #5a6a72 65%, #5a6a72 70%, transparent 70%),
+    linear-gradient(135deg, transparent 80%, #8a9a9e 80%, #8a9a9e 88%, transparent 88%);
+  touch-action:none; opacity:.75;
+}
+.window-resize-handle:active, .app-window.is-resizing .window-resize-handle{opacity:1}
+.app-window.is-resizable{overflow:hidden}
+.app-window.is-resizing{user-select:none}
