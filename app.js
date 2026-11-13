@@ -430,6 +430,52 @@ function wireWindowResize(element, winId) {
   window.addEventListener('touchend', onUp);
 }
 
+
+/** Place new window in free workspace (prefer under topmost reduced window). */
+function layoutNewWindow(area, width, height) {
+  const pad = 8;
+  const aw = area.clientWidth;
+  const ah = area.clientHeight;
+  // Collect existing visible windows
+  const boxes = [];
+  for (const [wid, win] of state.opened) {
+    if (win.minimized || win.maximized) continue;
+    const el = document.querySelector(`[data-window="${wid}"]`);
+    if (!el) continue;
+    boxes.push({
+      id: wid,
+      left: el.offsetLeft,
+      top: el.offsetTop,
+      width: el.offsetWidth,
+      height: el.offsetHeight,
+      bottom: el.offsetTop + el.offsetHeight,
+      right: el.offsetLeft + el.offsetWidth
+    });
+  }
+  // Prefer space under the lowest bottom edge of windows that leave room below
+  let best = null;
+  for (const b of boxes) {
+    const spaceBelow = ah - b.bottom - pad;
+    if (spaceBelow >= Math.min(height, 160)) {
+      const top = b.bottom + pad;
+      const left = Math.max(pad, Math.min(b.left, aw - width - pad));
+      const h = Math.min(height, Math.max(150, spaceBelow - pad));
+      const w = Math.min(width, aw - left - pad);
+      best = { left, top, width: w, height: h };
+      break;
+    }
+  }
+  if (best) return best;
+  // Fallback: cascade from top-left
+  const offset = (state.opened.size % 5) * 18;
+  return {
+    left: Math.max(pad, offset + pad),
+    top: Math.max(pad, offset + pad),
+    width: Math.min(width, aw - pad * 2),
+    height: Math.min(height, ah - pad * 2)
+  };
+}
+
 function openApp(id) {
   // Each Terminal / Browser launch creates a NEW independent window.
   if(id==='terminal'){
@@ -452,33 +498,36 @@ function openApp(id) {
   const isTerm=isTerminalId(id);
   // Compact terminal like a real OS console; other apps keep previous sizing.
   const isPhone = baseId === 'phone';
-  const width=isTerm
-    ? Math.min(560, Math.max(340, Math.floor(area.clientWidth*0.42)))
+  let width=isTerm
+    ? Math.min(560, Math.max(300, Math.floor(area.clientWidth*0.42)))
     : isPhone
       ? Math.max(280, area.clientWidth - 16)
       : Math.min(880,Math.max(Math.min(320,area.clientWidth-12),area.clientWidth-42));
-  const height=isTerm
-    ? Math.min(360, Math.max(240, Math.floor(area.clientHeight*0.42)))
+  let height=isTerm
+    ? Math.min(360, Math.max(220, Math.floor(area.clientHeight*0.42)))
     : isPhone
       ? Math.max(400, area.clientHeight - 56)
       : Math.min(650,Math.max(Math.min(290,area.clientHeight-12),area.clientHeight-42));
-  const offset=(state.opened.size%5)*22;
-  const title=isTerm?`Terminal ${id.replace('term-','#')}`:(isBrowserId(id)?`Browser ${id.replace('browser-','#')}`:app.title);
+    const title=isTerm?`Terminal ${id.replace('term-','#')}`:(isBrowserId(id)?`Browser ${id.replace('browser-','#')}`:app.title);
   const path=isTerm?`tty://${id}`:(isBrowserId(id)?`net://${id}`:app.path);
-  const win={id,title,path,ram:app.ram,minimized:false,maximized:false,alwaysOnTop:false,left:Math.max(8,(area.clientWidth-width)/2+offset-45),top:Math.max(8,(area.clientHeight-height)/2+offset-40),oldRect:null,baseApp:baseId};
+  const place = layoutNewWindow(area, width, height);
+  width = place.width; height = place.height;
+  const win={id,title,path,ram:app.ram,minimized:false,maximized:false,alwaysOnTop:false,left:place.left,top:place.top,oldRect:null,baseApp:baseId};
   state.opened.set(id,win);
   const element=document.createElement('section');
   element.className=`app-window${isTerm?' app-window-terminal':''}${isBrowserId(id)?' app-window-browser':''}`;
   element.dataset.window=id;
   element.setAttribute('role','dialog');
-  element.classList.add('is-resizable');
+  element.classList.add('is-resizable','window-enter');
   element.setAttribute('aria-label',title);
   element.style.width=`${width}px`;
   element.style.height=`${height}px`;
-  element.style.left=`${Math.min(win.left,Math.max(8,area.clientWidth-width-8))}px`;
-  element.style.top=`${Math.min(win.top,Math.max(8,area.clientHeight-height-8))}px`;
+  element.style.left=`${place.left}px`;
+  element.style.top=`${place.top}px`;
+
   element.innerHTML=`<header class="window-bar"><span class="window-app-mark">${icon(terminalIconId(id))}</span><strong class="window-title">${esc(title)}</strong><span class="window-path">${esc(path)}</span><div class="window-controls"><button type="button" data-action="toggle-pin-window" class="pin-btn" title="Поверх остальных (Always on Top)" aria-label="Поверх остальных"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 2l1.5 1.5-1 1L16 6l2.5-.5L20 7l-6 6-1.5-1.5L14 10l-1.5 1.5L4 20l-.5-3.5L12 9.5 10.5 8 14 2z"/></svg></button><button type="button" data-action="minimize-window" title="Свернуть" aria-label="Свернуть">—</button><button type="button" data-action="maximize-window" title="Развернуть" aria-label="Развернуть">□</button><button type="button" data-action="close-window" title="Закрыть" aria-label="Закрыть">×</button></div></header><div class="window-content" data-content></div><div class="window-resize" data-resize></div>`;
   $('windowLayer').append(element);wireWindow(id,element);renderWindow(id);focusWindow(id);renderTaskbar();
+  setTimeout(()=>element.classList.remove('window-enter'),280);
   if(isTerm)requestAnimationFrame(()=>element.querySelector('.terminal-form input')?.focus({preventScroll:true}));
 }
 
@@ -1451,6 +1500,7 @@ async function runTerminalCommand(termId, raw) {
   if (term.plugin) {
     if (c0 === 'exit' || c0 === 'quit') {
       term.plugin = null;
+      term.awaitFilename = null;
       clearTerminalView(termId);
       printNeofetch(termId);
       termAdd(termId, 'Type help · plugins · run <plugin-id> · neofetch', 'muted');
@@ -1458,10 +1508,56 @@ async function runTerminalCommand(termId, raw) {
       if (pr) pr.textContent = terminalPrompt(term);
       return;
     }
+
+    // After scan etc.: next line is filename, not a command
+    if (term.awaitFilename) {
+      const pending = term.awaitFilename;
+      term.awaitFilename = null;
+      const name = cmd.trim();
+      try {
+        const r = savePlayerNamedFile(state.game, name, pending.content, {
+          ext: pending.ext || '.txt',
+          type: pending.type || pending.kind || 'file',
+          kind: pending.kind
+        });
+        if (!r || !r.ok) {
+          termAdd(termId, (r && r.reason) || 'Не удалось сохранить', 'error');
+          term.awaitFilename = pending; // keep waiting
+          return;
+        }
+        termAdd(termId, 'Saved → ' + (r.file?.name || name), 'green');
+        scheduleSave();
+        if (state.opened.has('ide')) renderWindow('ide');
+        if (state.opened.has('computer')) renderWindow('computer');
+      } catch (e) {
+        termAdd(termId, String(e.message || e), 'error');
+        term.awaitFilename = pending;
+      }
+      return;
+    }
+
     term.busy = true;
     try {
+      // restore loaders for heavy commands
+      const loadCmds = {
+        'net-analyzer': { scan: 7000, analyze: 7000 },
+        'net-link': { connect: 6000, disconnect: 1200 },
+        'phone-access': { open: 3000, attack: 4000, block: 2000 },
+        'mail-drop': { drop: 3500, send: 3500 }
+      };
+      const ms = (loadCmds[term.plugin] && loadCmds[term.plugin][c0]) || 0;
+      if (ms > 0 && typeof animateWorkTimed === 'function') {
+        await animateWorkTimed(termId, term.plugin, ms, c0);
+      } else if (ms > 0 && typeof animateWork === 'function') {
+        await animateWork(termId, term.plugin);
+      }
+
       const result = await runPluginShellCommand(state.game, term.plugin, cmd.toLowerCase(), Date.now());
       (result && result.lines || []).forEach(l => termAdd(termId, typeof l === 'string' ? l : (l.text || ''), (l && l.type) || ''));
+      if (result && result.awaitFilename) {
+        term.awaitFilename = result.awaitFilename;
+        termAdd(termId, '(следующая строка = имя файла)', 'muted');
+      }
       if (result && result.clear) clearTerminalView(termId);
       if (result && (result.closePhoneLab || result.clearPhone)) {
         state._phoneTarget = null; state.phoneUnlocked = null; state.pinInput = '';
@@ -1714,6 +1810,9 @@ async function enterPluginWorkspace(termId, pluginId) {
   // remember focus — do NOT blur keyboard on mobile
   const keep = document.querySelector(`[data-window="${termId}"] .term-inline-input, [data-window="${termId}"] .terminal-form input`);
   clearTerminalView(termId);
+  if (typeof animatePluginBoot === 'function') {
+    try { await animatePluginBoot(termId, pluginId); } catch (e) {}
+  }
   await showPluginDashboard(termId, pluginId);
   const term = getTerm(termId);
   const win = document.querySelector(`[data-window="${termId}"]`);

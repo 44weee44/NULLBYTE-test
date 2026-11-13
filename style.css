@@ -23,7 +23,7 @@
 /* Bank */
 .bank-balance{padding:17px;border:1px solid #6a5737;border-radius:5px;background:radial-gradient(ellipse at 90% 0,#6b512533,transparent 55%),linear-gradient(130deg,#292419,#161d20)}.bank-balance span{color:#c3ab7c;font:8px var(--mono);letter-spacing:1px}.bank-balance strong{display:block;margin:8px 0;color:#f0dfb5;font:600 28px var(--mono)}.bank-balance small{color:#9b906f;font-size:8px}.transaction-row{display:grid;grid-template-columns:1fr auto;gap:10px;padding:9px 0;border-bottom:1px solid #2a3a42;font-size:9px}.transaction-row:last-child{border-bottom:0}.transaction-row strong{display:block;color:#cbd7de;font-weight:500}.transaction-row small{display:block;margin-top:4px;color:#778c99;font-size:8px}.transaction-row b{font:10px var(--mono);white-space:nowrap}.transaction-row .income{color:var(--green)}.transaction-row .expense,.transaction-row .confiscated{color:var(--red)}
 /* Small screens */
-@media(max-width:760px){.desktop-shell{grid-template-rows:39px minmax(0,1fr) 53px}.top-panel{padding:0 9px;gap:7px}.top-brand{gap:5px}.top-brand img{width:22px;height:22px}.top-brand strong{font-size:9px}.top-center{gap:6px;font-size:7px}.top-right{gap:6px;font-size:7px}.top-right #saveStatus{display:none}.desktop-icons{top:10px;left:7px;grid-template-columns:repeat(3,66px);grid-auto-rows:68px;gap:2px}.desktop-icon{width:66px;min-height:65px;font-size:8px;gap:3px;padding:4px 2px}.desktop-icon-symbol{width:31px;height:31px;border-radius:8px}.desktop-icon-symbol svg{width:19px;height:19px}.taskbar{gap:7px;padding:0 8px}.taskbar-brand{min-width:27px}.taskbar-brand img{width:26px;height:26px}.taskbar-brand div,.taskbar>.taskbar-divider{display:none}.taskbar-apps{gap:2px}.taskbar-app{width:34px;min-width:34px;height:34px;justify-content:center;padding:0}.taskbar-app span:last-child{display:none}.taskbar-tray{gap:7px}.tray-state,.taskbar-tray>.taskbar-divider{display:none}.app-window{inset:5px 5px 5px 5px!important;width:calc(100% - 10px)!important;height:calc(100% - 10px)!important;min-width:0;min-height:0;max-width:none;max-height:none;resize:none}.app-window.is-maximized{inset:2px!important}.window-bar{height:37px;min-height:37px;padding:0 5px 0 8px;gap:5px}.window-title{font-size:9px}.window-path{max-width:80px;font-size:7px}.window-controls{gap:0}.window-controls button{width:25px;height:25px}.window-content{padding:10px}.grid-3{grid-template-columns:repeat(2,minmax(0,1fr))}.profile-hero{padding:12px}.profile-rank b{font-size:14px}.stat-box strong{font-size:16px}.app-heading h2{font-size:15px}.modal-card{padding:18px}.toast-stack{right:8px;bottom:8px;width:calc(100% - 16px)}}
+@media(max-width:760px){.desktop-shell{grid-template-rows:39px minmax(0,1fr) 53px}.top-panel{padding:0 9px;gap:7px}.top-brand{gap:5px}.top-brand img{width:22px;height:22px}.top-brand strong{font-size:9px}.top-center{gap:6px;font-size:7px}.top-right{gap:6px;font-size:7px}.top-right #saveStatus{display:none}.desktop-icons{top:10px;left:7px;grid-template-columns:repeat(3,66px);grid-auto-rows:68px;gap:2px}.desktop-icon{width:66px;min-height:65px;font-size:8px;gap:3px;padding:4px 2px}.desktop-icon-symbol{width:31px;height:31px;border-radius:8px}.desktop-icon-symbol svg{width:19px;height:19px}.taskbar{gap:7px;padding:0 8px}.taskbar-brand{min-width:27px}.taskbar-brand img{width:26px;height:26px}.taskbar-brand div,.taskbar>.taskbar-divider{display:none}.taskbar-apps{gap:2px}.taskbar-app{width:34px;min-width:34px;height:34px;justify-content:center;padding:0}.taskbar-app span:last-child{display:none}.taskbar-tray{gap:7px}.tray-state,.taskbar-tray>.taskbar-divider{display:none}.app-window{min-width:180px;min-height:140px;max-width:calc(100% - 8px);max-height:calc(100% - 8px)}.app-window.is-maximized{inset:2px!important}.window-bar{height:37px;min-height:37px;padding:0 5px 0 8px;gap:5px}.window-title{font-size:9px}.window-path{max-width:80px;font-size:7px}.window-controls{gap:0}.window-controls button{width:25px;height:25px}.window-content{padding:10px}.grid-3{grid-template-columns:repeat(2,minmax(0,1fr))}.profile-hero{padding:12px}.profile-rank b{font-size:14px}.stat-box strong{font-size:16px}.app-heading h2{font-size:15px}.modal-card{padding:18px}.toast-stack{right:8px;bottom:8px;width:calc(100% - 16px)}}
 @media(max-width:430px){.top-right{display:none}.top-center{margin-left:auto}.desktop-icons{grid-template-columns:repeat(3,58px);grid-auto-rows:62px}.desktop-icon{width:58px;min-height:60px}.desktop-icon-symbol{width:28px;height:28px}.grid-2,.grid-3,.hardware-grid{grid-template-columns:1fr 1fr}.operation-grid{grid-template-columns:1fr}.window-path{display:none}.profile-ident h3{font-size:14px}.profile-rank{display:none}.bank-balance strong{font-size:23px}}
 @media(min-width:1100px){.desktop-icons{grid-template-columns:repeat(2,82px);grid-auto-rows:82px}.app-window{min-width:340px}.window-content{padding:18px}}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}
@@ -1132,3 +1132,29 @@ html,body{background:#0a0a0a!important;font-size:12px!important}
 .window-resize-handle:active, .app-window.is-resizing .window-resize-handle{opacity:1}
 .app-window.is-resizable{overflow:hidden}
 .app-window.is-resizing{user-select:none}
+
+/* smooth WM */
+.app-window{
+  transition: box-shadow .18s ease, border-color .18s ease, opacity .16s ease, transform .18s ease;
+}
+.app-window.window-enter{
+  animation: nbWinIn .22s ease-out;
+}
+@keyframes nbWinIn{
+  from{opacity:0;transform:translateY(8px) scale(.98)}
+  to{opacity:1;transform:none}
+}
+.app-window.is-resizing{
+  transition:none!important;
+}
+.window-title{
+  font-size:12px!important;
+  font-weight:600!important;
+  color:#e4ecef!important;
+  letter-spacing:.2px;
+}
+.window-bar{
+  height:34px!important;
+  min-height:34px!important;
+}
+.window-path{font-size:9px!important;color:#7a909c!important}
