@@ -1,0 +1,10 @@
+{
+  "name": "NULLBYTE OS",
+  "short_name": "NULLBYTE",
+  "description": "Одиночный симулятор хакерской жизни в вымышленном цифровом мире",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#0b1219",
+  "theme_color": "#0b1219",
+  "icons": [{"src":"icon.png","sizes":"512x512","type":"image/png","purpose":"any maskable"},{"src":"icon.png","sizes":"192x192","type":"image/png","purpose":"any"}]
+}

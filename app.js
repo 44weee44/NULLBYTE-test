@@ -1,0 +1,2852 @@
+import {
+  BALANCE, PLUGINS, HARDWARE, SITES, LOCATIONS, createInitialState, validNickname, escapeText as esc,
+  getInstalledPlugin, getPlugin, getHardwareUsage, getRamUsage, purchasePlugin, buyHardware, uninstallPlugin,
+  acceptMission, cancelMission, missionBoardTimer, rotateMissionBoard, getSite, getSiteProgress, operateSite, exportMissionResult, submitMission,
+  processTimedEvents, bankStatus, bankRisk, attemptBankSimulation, saveEditorFile, validateNbs, runNbs, grantXp,
+  recordHistory, addBookmark, idempotencyKey,
+  PLUGIN_SHELLS, PLUGIN_ANIM, runPluginShellCommand, pluginShellBootLines, resolveSiteRef, savePlayerNamedFile, findFileByName, markServerModified,
+  isPluginLocked, isMissionVisible, xpThresholdForLevel, bindPhoneMissionTarget, ensureTrading, TRADING_TICKERS, tradingSparkline, listRegionPhones, scheduleMailDrop, processMailDrops, sendPlayerMail, processMailDeliveries } from './engine.js';
+import { findPhone, phoneMessages, phoneGallery, phoneCallLog, phoneContacts, phoneFiles, lockPhone, unlockWithPin, isNetworkBanned, PROTECTION_RULES, registerBankFromMessages, PHONE_REGIONS, buildNetworkReport } from './phones.js';
+import { bankLogin, bankTransfer, getBankSession, searchNpcs, pluginDocs, touchNpc, NPC_POOL_SIZE } from './npc.js';
+import { extendedPluginDocs } from './operations.js';
+import { loadSavedGame, saveGame } from './storage.js';
+
+const $ = id => document.getElementById(id);
+const svg = {
+  profile:'<circle cx="12" cy="8" r="4"/><path d="M4 21c.7-4.1 3.3-6.2 8-6.2s7.3 2.1 8 6.2"/>',
+  terminal:'<rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3m6 0h4"/>',
+  darkshop:'<path d="M4 8h16l-1.5 13h-13L4 8Z"/><path d="M8 8V6a4 4 0 0 1 8 0v2"/>',
+  browser:'<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>',
+  forge:'<path d="M4 5h16v14H4zM8 9l3 3-3 3m6 0h3"/>',
+  map:'<path d="m3 6 6-3 6 3 6-3v15l-6 3-6-3-6 3V6Z"/><path d="M9 3v15m6-12v15"/>',
+  mail:'<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m4 7 8 6 8-6"/>',
+  blackwire:'<path d="M4 5h16v12H9l-5 4V5Z"/><path d="M8 9h8m-8 4h5"/>',
+  help:'<circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.6 2.6 0 1 1 4.8 1.3c-1.1 1.4-2.3 1.6-2.3 3.2m0 3h.01"/>',
+  ide:'<path d="m8 7-5 5 5 5m8-10 5 5-5 5m-3-13-2 16"/>',
+  bank:'<path d="m3 9 9-6 9 6M5 10v9m5-9v9m4-9v9m5-9v9M3 21h18"/>',
+  phone:'<rect x="7" y="2" width="10" height="20" rx="2"/><path d="M10 18h4"/>',
+  intel:'<circle cx="12" cy="12" r="3"/><path d="M12 3v3m0 12v3M3 12h3m12 0h3"/>',
+  computer:'<rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8m-4-4v4"/>'
+};
+const APPS = [
+  {id:'bank',title:'Aster Bank',path:'bank://account',ram:1,description:'Игровые кредиты'},
+  {id:'terminal',title:'Терминал',path:'terminal://nbshell',ram:1,description:'Командный интерфейс'},
+  {id:'darkshop',title:'DarkShop',path:'shop://hardware',ram:1,description:'Комплектующие ПК'},
+  {id:'browser',title:'Browser',path:'net://fictional-web',ram:2,description:'Вымышленный интернет'},
+  {id:'forge',title:'NULForge',path:'repo://plugins',ram:1,description:'Каталог игровых плагинов'},
+  {id:'map',title:'NullAtlas',path:'atlas://world',ram:2,description:'Карта игрового мира'},
+  {id:'mail',title:'N-Mail',path:'mail://inbox',ram:1,description:'Внутриигровая почта'},
+  {id:'blackwire',title:'BlackWire',path:'board://contracts',ram:1,description:'Биржа контрактов NPC'},
+  {id:'help',title:'Help / Docs',path:'docs://manual',ram:1,description:'Справка по игре'},
+  {id:'ide',title:'NBS IDE',path:'ide://workspace',ram:2,description:'Редактор игровых скриптов'},
+  {id:'phone',title:'Phone Lab',path:'phone://lab',ram:2,description:'Визуальное исследование телефонов'},
+  {id:'intel',title:'Intel',path:'intel://feed',ram:1,description:'Разведка, события, discovered'},
+  {id:'fbi',title:'FBI',path:'agency://fbi',ram:1,description:'Закрытый раздел'},
+  {id:'profile',title:'Профиль',path:'user://operator',ram:1,description:'Оператор и прогресс'},
+  {id:'computer',title:'My Computer',path:'system://hardware',ram:1,description:'Компьютер и файлы'}
+];
+const state = {opened:new Map(),z:20,drag:null,active:null,game:null,provider:'LOCAL SAVE',saveWarning:'',saveTimer:null,terminals:new Map(),termSeq:0,browserTabs:[],selectedMail:null,selectedFileId:null,selectedMissionId:null,editorText:'',editorName:'mission_report',nbsOutput:'Поддерживается только фиксированный список игровых деклараций.',modalConfirm:null,bootDone:false,persisting:false,persistPending:false,saveBlocked:false};
+
+function icon(id,cls='') { return `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true">${svg[id]||svg.help}</svg>`; }
+function appInfo(id) { return APPS.find(a=>a.id===id); }
+function fmt(n) { return new Intl.NumberFormat('ru-RU').format(Math.floor(Number(n)||0)); }
+function formatDate(ts) { return new Intl.DateTimeFormat('ru-RU',{day:'2-digit',month:'short',year:'numeric'}).format(new Date(ts)); }
+function formatTime(ts) { return new Intl.DateTimeFormat('ru-RU',{hour:'2-digit',minute:'2-digit'}).format(new Date(ts)); }
+function humanLeft(ms) { const total=Math.max(0,Math.ceil(ms/1000)); const h=Math.floor(total/3600),m=Math.floor((total%3600)/60),s=total%60; return h?`${h}ч ${m}м`:`${m}м ${s}с`; }
+function currentRam() { return getRamUsage(state.game,[...state.opened.values()].map(w=>({ram:w.ram,minimized:w.minimized}))); }
+function currentLevelNeed() { const lvl=state.game.player.level; if(lvl>=BALANCE.maxLevel) return 0; const need=(typeof xpThresholdForLevel==='function'?xpThresholdForLevel(lvl):BALANCE.xpToLevel[lvl])||0; return Math.max(0,need-state.game.player.xp); }
+function toast(message,type='info') { /* notifications off — no UI interrupt / keyboard steal */ return; }
+function tickMailDeliveries() {
+  try {
+    if (state.game && typeof processMailDeliveries === 'function') {
+      const done = processMailDeliveries(state.game);
+      if (done && done.length) { scheduleSave(); if (state.opened.has('mail')) renderWindow('mail'); }
+    }
+  } catch (e) {}
+}
+setInterval(tickMailDeliveries, 3000);
+function scheduleSave() { clearTimeout(state.saveTimer);state.saveTimer=setTimeout(persist,250); }
+async function persist() {
+  if(!state.game||state.saveBlocked)return;
+  if(state.persisting){state.persistPending=true;return;}
+  state.persisting=true;
+  try {
+    do {
+      state.persistPending=false;
+      state.game.meta.updatedAt=Date.now();
+      const result=await saveGame(state.game);
+      state.provider=result.provider;state.saveWarning=result.warning||'';
+      $('saveStatus').textContent=result.provider;
+      $('saveStatus').title=result.warning||'';
+      if(!result.ok && result.warning){
+        console.warn('[NULLBYTE SAVE]', result.warning);
+        if(!state._saveErrorShown){
+          toast(result.warning,'error');
+          state._saveErrorShown=true;
+        }
+      } else {
+        state._saveErrorShown=false;
+      }
+    } while(state.persistPending);
+  } finally { state.persisting=false; }
+}
+function refreshSystem() {
+  if(!state.game)return;
+  const ram=currentRam();
+  $('topRam').textContent=`RAM ${ram.used}/${ram.total} GB`;
+  $('sessionLabel').textContent=state.game.player.nickname.toUpperCase();
+  $('menuNickname').textContent=state.game.player.nickname.toUpperCase();
+  $('saveStatus').textContent=state.provider;
+  $('systemStatus').textContent=bankStatus(state.game).locked?'SYSTEM READY / BANK LOCKED':'SYSTEM READY';
+  document.querySelectorAll('.taskbar-app').forEach(item=>item.classList.toggle('active',item.dataset.window===state.active));
+}
+function updateClock() {
+  const now=new Date();$('clockTime').textContent=new Intl.DateTimeFormat('ru-RU',{hour:'2-digit',minute:'2-digit'}).format(now);
+  $('clockDate').textContent=new Intl.DateTimeFormat('ru-RU',{day:'2-digit',month:'2-digit',year:'numeric'}).format(now);
+}
+function renderDesktopIcons() {
+  const icons = $('desktopIcons');
+  icons.hidden = false;
+  icons.innerHTML = APPS.map(a => `
+    <button class="desktop-icon" type="button" data-action="open-app" data-app="${a.id}" title="${esc(a.title)}">
+      <span class="desktop-icon-symbol">${icon(a.id)}</span>
+      <span>${esc(a.title)}</span>
+    </button>
+  `).join('');
+  $('startMenuApps').innerHTML = APPS.map(a => `
+    <button class="start-app" type="button" data-action="open-app" data-app="${a.id}">
+      <span class="start-app-icon">${icon(a.id)}</span>
+      <span>${esc(a.title)}</span>
+    </button>
+  `).join('');
+}
+function renderTaskbar() {
+  $('taskbarApps').innerHTML=[...state.opened.entries()].map(([id,w])=>{
+    const short = isTerminalId(id) ? `Term ${id.replace('term-','#')}` : (isBrowserId(id) ? `Web ${id.replace('browser-','#')}` : (id==='phone' ? 'Phone' : w.title));
+    return `<button class="taskbar-app ${state.active===id&&!w.minimized?'active':''} ${w.minimized?'minimized':''}" type="button" data-action="taskbar-window" data-window="${id}" title="${esc(w.title)}"><i>${icon(isTerminalId(id)?'terminal':(isBrowserId(id)?'browser':id))}</i><span>${esc(short)}</span></button>`;
+  }).join('');
+  refreshSystem();
+}
+function showModal({title,eyebrow='NULLBYTE SYSTEM',body='',fields='',confirm='ПРОДОЛЖИТЬ',cancel='ОТМЕНА',danger=false,onConfirm=null}) {
+  const modal=$('modalCard');state.modalConfirm=onConfirm;
+  modal.innerHTML=`<div class="modal-eyebrow">${esc(eyebrow)}</div><h2 id="modalTitle">${esc(title)}</h2>${body?`<p>${body}</p>`:''}${fields}<div class="modal-actions">${cancel?`<button type="button" class="btn ghost" data-action="modal-cancel">${esc(cancel)}</button>`:''}<button type="button" class="btn ${danger?'danger':'primary'}" data-action="modal-confirm">${esc(confirm)}</button></div>`;
+  $('modalBackdrop').hidden=false;
+  const first=modal.querySelector('input,button');first?.focus();
+}
+function closeModal(){ $('modalBackdrop').hidden=true;state.modalConfirm=null; }
+function confirm(title,body,onConfirm,{danger=false,confirmText='ПОДТВЕРДИТЬ'}={}) {showModal({title,body,confirm:confirmText,danger,onConfirm});}
+function finishModal() {const fn=state.modalConfirm;if(fn){const result=fn();if(result===false)return;}closeModal();}
+
+function boot() {
+  const lines = [
+    { t: '[ 0.000000] Linux version 6.1.0-nullbyte', c: '' },
+    { t: '[ 0.142831] Command line: BOOT_IMAGE=/boot/vmlinuz root=UUID=nullbyte', c: '' },
+    { t: '[ 0.318204] Initializing virtual hardware profile', c: '' },
+    { t: '[ 0.491773] Loading fictional world snapshot', c: '' },
+    { t: '[ 0.672915] Mounting player save container', c: 'ok' },
+    { t: '[ 0.854102] Starting desktop services', c: '' },
+    { t: '[ 1.021440] nullnet: mesh driver loaded', c: '' },
+    { t: '[ 1.188203] phone-lab: protocol stack ready', c: '' },
+    { t: '[ 1.340112] nbs-ide: workspace mount ok', c: '' },
+    { t: '[ OK ] Reached target Local File Systems', c: 'ok' },
+    { t: '[ OK ] Reached target Network', c: 'ok' },
+    { t: '[ OK ] Started NULLBYTE Simulation Environment', c: 'ok' },
+    { t: '[ OK ] Reached target Multi-User System', c: 'ok' }
+  ];
+  // shuffle in a few random decoy lines mid-boot
+  const decoys = [
+    '[ 0.910002] cpu0: nullcore @ 3.20GHz',
+    '[ 1.002331] mem: 8192MB simulated RAM',
+    '[ 1.110448] fsck: volume nullfs clean',
+    '[ 1.250001] audit: type=1400 op=start',
+    '[ 1.401122] dbus: system bus online'
+  ];
+  const log = $('bootLog'), bar = $('bootProgress');
+  let index = 0;
+  let progress = 0;
+  if (bar) bar.style.width = '0%';
+  const tickBar = () => {
+    progress = Math.min(98, progress + 2 + Math.random() * 4);
+    if (bar) bar.style.width = progress + '%';
+  };
+  const barTimer = setInterval(tickBar, 80);
+  const run = () => {
+    if (index >= lines.length) {
+      clearInterval(barTimer);
+      if (bar) bar.style.width = '100%';
+      setTimeout(finishBoot, 420);
+      return;
+    }
+    // occasionally inject decoy
+    if (index === 6 && Math.random() > 0.3) {
+      const d = decoys[(Math.random() * decoys.length) | 0];
+      const row = document.createElement('div');
+      row.className = 'boot-line';
+      row.innerHTML = d.replace(/(\[ OK \])/, '<span class="boot-ok">$1</span>').replace(/(nullbyte|nullnet|phone-lab|nbs-ide|player save)/gi, '<span class="boot-hi">$1</span>');
+      log.append(row);
+    }
+    const item = lines[index++];
+    const row = document.createElement('div');
+    row.className = 'boot-line' + (item.c === 'ok' ? ' boot-line-ok' : '');
+    let html = item.t
+      .replace(/\[ OK \]/g, '<span class="boot-ok">[ OK ]</span>')
+      .replace(/(BOOT_IMAGE=\/boot\/vmlinuz|root=UUID=nullbyte)/g, '<span class="boot-hi">$1</span>')
+      .replace(/(player save|NULLBYTE Simulation Environment|nullbyte|nullnet|phone-lab|nbs-ide)/g, '<span class="boot-hi">$1</span>');
+    row.innerHTML = html;
+    log.append(row);
+    log.scrollTop = log.scrollHeight;
+    setTimeout(run, 220 + Math.random() * 180);
+  };
+  run();
+}
+
+let bootFinished=false;
+async function finishBoot() {
+  if(bootFinished)return;bootFinished=true;
+  try {
+    const tg = window.Telegram?.WebApp;
+    if(tg){
+      tg.ready?.();
+      tg.expand?.();
+      tg.setHeaderColor?.('#0c151d');
+      tg.setBackgroundColor?.('#0b1219');
+      console.log('[NULLBYTE] CloudStorage', tg.CloudStorage ? 'YES' : 'NO');
+    } else {
+      console.warn('[NULLBYTE] Telegram.WebApp missing — local only');
+    }
+  } catch(e) {
+    console.warn('[NULLBYTE] Telegram init error', e);
+  }
+  await new Promise(r => setTimeout(r, 400));
+  const tgUser=window.Telegram?.WebApp?.initDataUnsafe?.user||null;
+  let loaded=await loadSavedGame(tgUser);
+  // Second attempt if cloud failed and no nickname (common Telegram race).
+  if(!loaded.state?.player?.nickname && window.Telegram?.WebApp?.CloudStorage){
+    await new Promise(r => setTimeout(r, 500));
+    const retry=await loadSavedGame(tgUser);
+    if(retry.state?.player?.nickname) loaded=retry;
+  }
+  state.game=loaded.state;state.provider=loaded.provider;state.saveWarning=loaded.warning;state.saveBlocked=Boolean(loaded.blocked);
+  $('bootScreen').hidden=true;$('desktopShell').hidden=false;
+  renderDesktopIcons();renderTaskbar();updateClock();
+  processTimedEvents(state.game);
+  $('saveStatus').textContent=state.provider;
+  const nick = String(state.game.player.nickname||'').trim();
+  state.game.player.nickname = nick;
+  if(!nick) {
+    showNicknameModal();
+    if(loaded.warning) toast(loaded.warning,'error');
+  } else {
+    toast(`С возвращением, ${nick}.`, 'success');
+    if(loaded.warning) toast(loaded.warning,'error');
+  }
+  if(state.game.player.nickname && !state.saveBlocked) {
+    await persist();
+  } else {
+    scheduleSave();
+  }
+}
+function showNicknameModal() {
+  const tgId=state.game.player.telegramId;
+  const body='Создай ник оператора. Он будет отображаться в системе, контрактах и внутриигровой почте. Ник нельзя использовать как код.';
+  const fields=`<label for="nicknameInput">НИК ОПЕРАТОРА</label><input id="nicknameInput" maxlength="12" autocomplete="off" spellcheck="false" placeholder="Например, NullFox"><div class="modal-hint">2–12 символов: только латинские A–Z и цифры 0–9.</div>${tgId?`<div class="modal-hint">Telegram ID: ${esc(tgId)} (справочная информация)</div>`:''}${state.saveBlocked?'<div class="notice warning section-gap">Облачное сохранение обнаружено, но не удалось прочитать или проверить его. Локальной копии нет. Чтобы не перезаписать данные молча, подтверди явный запуск новой игры.</div><label class="confirm-check"><input id="confirmNewSave" type="checkbox"> Я понимаю, что начну новую игру вместо недоступного сохранения.</label>':''}<div id="nicknameError" class="modal-error" hidden></div>`;
+  showModal({title:'Первый запуск',eyebrow:'NULLBYTE / USER SETUP',body,fields,confirm:'СОЗДАТЬ ПРОФИЛЬ',cancel:'',onConfirm:()=>{
+    const input=$('nicknameInput');const value=input?.value?.trim()||'';
+    if(!validNickname(value)){const err=$('nicknameError');if(err){err.textContent='Ник должен содержать 2–12 латинских букв или цифр.';err.hidden=false;}return false;}
+    if(state.saveBlocked&&!$('confirmNewSave')?.checked){const err=$('nicknameError');if(err){err.textContent='Подтверди запуск новой игры, чтобы продолжить.';err.hidden=false;}return false;}
+    state.saveBlocked=false;state.game.player.nickname=value;if(!state.game.player.walletId)state.game.player.walletId='NB-'+value.toUpperCase()+'-'+Math.random().toString(36).slice(2,6).toUpperCase();refreshSystem();toast(`Профиль ${value} создан. Сохраняю…`,'success');persist().then(()=>{toast(state.provider==='TELEGRAM CLOUD'?'Сохранено в Telegram Cloud.':'Локальное сохранение.','success');refreshSystem();});
+  }});
+  const input=$('nicknameInput');input?.addEventListener('keydown',e=>{if(e.key==='Enter')finishModal();});
+}
+
+
+function clampWindowRect(el, win) {
+  const area = $('desktopWorkspace');
+  if (!area || !el) return;
+  const maxW = area.clientWidth;
+  const maxH = area.clientHeight;
+  let w = el.offsetWidth || win?.width || 320;
+  let h = el.offsetHeight || win?.height || 240;
+  w = Math.min(w, maxW);
+  h = Math.min(h, maxH);
+  let left = parseFloat(el.style.left) || 0;
+  let top = parseFloat(el.style.top) || 0;
+  // Keep at least 40px of title bar visible
+  left = Math.max(-w + 80, Math.min(left, maxW - 60));
+  top = Math.max(0, Math.min(top, maxH - 40));
+  el.style.left = left + 'px';
+  el.style.top = top + 'px';
+  el.style.width = w + 'px';
+  el.style.height = h + 'px';
+  if (win) { win.left = left; win.top = top; win.width = w; win.height = h; }
+}
+
+function normalizeAllWindows() {
+  for (const [id, win] of state.opened) {
+    if (win.minimized || win.maximized) continue;
+    const el = document.querySelector(`[data-window="${id}"]`);
+    if (el) clampWindowRect(el, win);
+  }
+}
+
+function isTerminalId(id){return id==='terminal'||String(id).startsWith('term-');}
+function terminalIconId(id){return isTerminalId(id)?'terminal':id;}
+
+
+function hwName(part, level) {
+  const list = (typeof HARDWARE !== 'undefined' && HARDWARE[part]) || [];
+  const row = list.find(x => x.level === (level || 1)) || list[0];
+  return (row && row.name) || ('L' + (level || 1));
+}
+
+function buildNeofetchLines(g) {
+  g = g || state.game || {};
+  const nick = ((g.player && g.player.nickname) || 'user').toLowerCase().replace(/[^a-z0-9_-]/g, '') || 'user';
+  const c = g.computer || {};
+  const started = c.uptimeStartedAt || Date.now();
+  const mins = Math.max(1, Math.floor((Date.now() - started) / 60000));
+  const uptime = mins >= 60 ? (Math.floor(mins / 60) + 'h ' + (mins % 60) + 'm') : (mins + 'm');
+  const ram = ((typeof HARDWARE !== 'undefined' && HARDWARE.ram) || []).find(x => x.level === (c.ram || 1)) || { gb: 4 };
+  let ramUsed = 1;
+  try { ramUsed = (getRamUsage(g).used) || 1; } catch (e) {}
+  const plugs = (c.installedPlugins || []).length;
+  // Dragon ASCII (compact, green on left feel)
+  const art = [
+    '        ..=******=..',
+    '     .=*##########*=.',
+    "   .*##*'        '*##*.",
+    '  *##*   .o  o.    *##*',
+    " *##*     '--'      *##*",
+    ' *##*.    /\\/\\     .*##*',
+    "  *##*~..      ..~*##*",
+    "   '*###*=....=*###*'",
+    "      '~*######*~'",
+    "          '**'",
+  ];
+  const lines = art.map((row, i) => ({ text: row, type: 'green' }));
+  lines.push({ text: '', type: 'muted' });
+  lines.push({ text: nick + '@nullbyte-os', type: 'title' });
+  lines.push({ text: '---------------------------', type: 'muted' });
+  lines.push({ text: 'OS: NULLBYTE OS ' + (c.os || 1) + '.0 x86_64', type: '' });
+  lines.push({ text: 'Host: Operator Workstation', type: '' });
+  lines.push({ text: 'Kernel: nbkernel-' + (c.os || 1) + '.0.0-nullbyte', type: '' });
+  lines.push({ text: 'Uptime: ' + uptime, type: '' });
+  lines.push({ text: 'Packages: ' + plugs + ' (plugins)', type: '' });
+  lines.push({ text: 'Shell: nbshell 1.0', type: '' });
+  lines.push({ text: 'Resolution: desktop', type: '' });
+  lines.push({ text: 'DE: NULLBYTE Desktop', type: '' });
+  lines.push({ text: 'WM: nb-wm', type: '' });
+  lines.push({ text: 'Terminal: Alacritty*', type: '' });
+  lines.push({ text: 'CPU: ' + hwName('cpu', c.cpu), type: '' });
+  lines.push({ text: 'GPU: ' + hwName('gpu', c.gpu), type: '' });
+  lines.push({ text: 'Memory: ' + ramUsed + 'MiB / ' + ((ram.gb || 4) * 1024) + 'MiB', type: '' });
+  lines.push({ text: 'Storage: ' + hwName('storage', c.storage), type: '' });
+  lines.push({ text: 'Level: ' + ((g.player && g.player.level) || 1) + ' · XP ' + ((g.player && g.player.xp) || 0), type: 'blue' });
+  lines.push({ text: 'Credits: ' + ((g.economy && g.economy.credits) || 0) + ' CR', type: 'amber' });
+  lines.push({ text: '', type: 'muted' });
+  lines.push({ text: '████ ████ ████ ████ ████', type: 'palette' });
+  return lines;
+}
+
+function printNeofetch(termId) {
+  buildNeofetchLines(state.game).forEach(l => termAdd(termId, l.text, l.type || ''));
+}
+
+function createTerminalSession(){
+  const lines = (typeof buildNeofetchLines === 'function')
+    ? buildNeofetchLines(state.game)
+    : [{ text: 'NULLBYTE OS', type: 'green' }];
+  lines.push({ text: 'Type help · plugins · run <id> · neofetch', type: 'muted' });
+  return { lines, plugin: null, busy: false, scrollPin: true };
+}
+
+function getTerm(id){
+  if(!isTerminalId(id))return null;
+  if(!state.terminals.has(id))state.terminals.set(id,createTerminalSession());
+  return state.terminals.get(id);
+}
+
+function isBrowserId(id){return id==='browser'||String(id).startsWith('browser-');}
+function browserIconId(id){return isBrowserId(id)?'browser':id;}
+
+function openApp(id) {
+  // Each Terminal / Browser launch creates a NEW independent window.
+  if(id==='terminal'){
+    state.termSeq+=1;
+    id=`term-${state.termSeq}`;
+    state.terminals.set(id,createTerminalSession());
+  }
+  if(id==='browser'){
+    state.browserSeq=(state.browserSeq||0)+1;
+    id=`browser-${state.browserSeq}`;
+    if(!state.browserSessions) state.browserSessions=new Map();
+    state.browserSessions.set(id,{tabs:[{id:'tab_start',siteId:'',page:'start',title:'Новая вкладка',history:[{page:'start'}],histIdx:0}],active:0});
+  }
+  const baseId=isTerminalId(id)?'terminal':(isBrowserId(id)?'browser':id);
+  const app=appInfo(baseId);if(!app)return;
+  const existing=state.opened.get(id);
+  if(existing){existing.minimized=false;focusWindow(id);return;}
+  const ram=currentRam();if(ram.used+app.ram>ram.total){toast(`Недостаточно RAM: ${app.title} требует ${app.ram} GB.`,'error');return;}
+  const area=$('desktopWorkspace');
+  const isTerm=isTerminalId(id);
+  // Compact terminal like a real OS console; other apps keep previous sizing.
+  const isPhone = baseId === 'phone';
+  const width=isTerm
+    ? Math.min(560, Math.max(340, Math.floor(area.clientWidth*0.42)))
+    : isPhone
+      ? Math.max(280, area.clientWidth - 16)
+      : Math.min(880,Math.max(Math.min(320,area.clientWidth-12),area.clientWidth-42));
+  const height=isTerm
+    ? Math.min(360, Math.max(240, Math.floor(area.clientHeight*0.42)))
+    : isPhone
+      ? Math.max(400, area.clientHeight - 56)
+      : Math.min(650,Math.max(Math.min(290,area.clientHeight-12),area.clientHeight-42));
+  const offset=(state.opened.size%5)*22;
+  const title=isTerm?`Terminal ${id.replace('term-','#')}`:(isBrowserId(id)?`Browser ${id.replace('browser-','#')}`:app.title);
+  const path=isTerm?`tty://${id}`:(isBrowserId(id)?`net://${id}`:app.path);
+  const win={id,title,path,ram:app.ram,minimized:false,maximized:false,alwaysOnTop:false,left:Math.max(8,(area.clientWidth-width)/2+offset-45),top:Math.max(8,(area.clientHeight-height)/2+offset-40),oldRect:null,baseApp:baseId};
+  state.opened.set(id,win);
+  const element=document.createElement('section');
+  element.className=`app-window${isTerm?' app-window-terminal':''}${isBrowserId(id)?' app-window-browser':''}`;
+  element.dataset.window=id;
+  element.setAttribute('role','dialog');
+  element.setAttribute('aria-label',title);
+  element.style.width=`${width}px`;
+  element.style.height=`${height}px`;
+  element.style.left=`${Math.min(win.left,Math.max(8,area.clientWidth-width-8))}px`;
+  element.style.top=`${Math.min(win.top,Math.max(8,area.clientHeight-height-8))}px`;
+  element.innerHTML=`<header class="window-bar"><span class="window-app-mark">${icon(terminalIconId(id))}</span><strong class="window-title">${esc(title)}</strong><span class="window-path">${esc(path)}</span><div class="window-controls"><button type="button" data-action="toggle-pin-window" class="pin-btn" title="Поверх остальных (Always on Top)" aria-label="Поверх остальных"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 2l1.5 1.5-1 1L16 6l2.5-.5L20 7l-6 6-1.5-1.5L14 10l-1.5 1.5L4 20l-.5-3.5L12 9.5 10.5 8 14 2z"/></svg></button><button type="button" data-action="minimize-window" title="Свернуть" aria-label="Свернуть">—</button><button type="button" data-action="maximize-window" title="Развернуть" aria-label="Развернуть">□</button><button type="button" data-action="close-window" title="Закрыть" aria-label="Закрыть">×</button></div></header><div class="window-content" data-content></div><div class="window-resize" data-resize></div>`;
+  $('windowLayer').append(element);wireWindow(id,element);renderWindow(id);focusWindow(id);renderTaskbar();
+  if(isTerm)requestAnimationFrame(()=>element.querySelector('.terminal-form input')?.focus({preventScroll:true}));
+}
+
+function onGlobalPointerMove(e){
+  const d=state.drag;if(!d)return;
+  const element=document.querySelector(`[data-window="${d.id}"]`);
+  if(!element)return;
+  if(d.resize){
+    const area=$('desktopWorkspace');
+    const w=Math.max(280,Math.min(area.clientWidth-8,d.startW+(e.clientX-d.sx)));
+    const h=Math.max(180,Math.min(area.clientHeight-8,d.startH+(e.clientY-d.sy)));
+    element.style.width=w+'px';element.style.height=h+'px';
+    const win=state.opened.get(d.id);if(win){win.width=w;win.height=h;}
+    return;
+  }
+  const area=$('desktopWorkspace');
+  const ww=element.offsetWidth;
+  const x=Math.max(-ww+80,Math.min(area.clientWidth-60,e.clientX-d.workspace.left-d.dx));
+  const y=Math.max(0,Math.min(area.clientHeight-40,e.clientY-d.workspace.top-d.dy));
+  element.style.left=x+'px';element.style.top=y+'px';
+  const win=state.opened.get(d.id);if(win){win.left=x;win.top=y;}
+}
+function onGlobalPointerUp(e){
+  if(state.drag&&(e.pointerId===undefined||e.pointerId===state.drag.pointerId)) state.drag=null;
+}
+if(!window.__nbDragGlobal){
+  window.__nbDragGlobal=true;
+  document.addEventListener('pointermove',onGlobalPointerMove,{passive:false});
+  document.addEventListener('pointerup',onGlobalPointerUp);
+  document.addEventListener('pointercancel',onGlobalPointerUp);
+}
+
+function wireWindow(id,element) {
+  element.addEventListener('pointerdown',e=>{
+    if(e.target.closest('.window-controls')||e.target.closest('[data-resize]'))return;
+    focusWindow(id);
+  });
+  const bar=element.querySelector('.window-bar');
+  bar.addEventListener('pointerdown',e=>{
+    if(e.target.closest('.window-controls')||state.opened.get(id)?.maximized||e.button!==0)return;
+    if(e.target.closest('input,textarea,button'))return;
+    const rect=element.getBoundingClientRect(),workspace=$('desktopWorkspace').getBoundingClientRect();
+    state.drag={id,pointerId:e.pointerId,dx:e.clientX-rect.left,dy:e.clientY-rect.top,workspace};
+    try{bar.setPointerCapture(e.pointerId);}catch{}focusWindow(id);e.preventDefault();
+  });
+  bar.addEventListener('pointermove',e=>{
+    const d=state.drag;if(!d||d.id!==id||d.pointerId!==e.pointerId||d.resize)return;
+    const area=$('desktopWorkspace');const ww=element.offsetWidth,wh=element.offsetHeight;const x=Math.max(-ww+80,Math.min(area.clientWidth-60,e.clientX-d.workspace.left-d.dx)),y=Math.max(0,Math.min(area.clientHeight-40,e.clientY-d.workspace.top-d.dy));
+    element.style.left=`${x}px`;element.style.top=`${y}px`;const w=state.opened.get(id);if(w){w.left=x;w.top=y;}
+  });
+  const stop=e=>{if(state.drag?.id===id&&state.drag.pointerId===e.pointerId)state.drag=null;};
+  bar.addEventListener('pointerup',stop);bar.addEventListener('pointercancel',stop);bar.addEventListener('lostpointercapture',stop);
+
+  // Resize from bottom-right handle
+  const rz=element.querySelector('[data-resize]');
+  if(rz){
+    rz.addEventListener('pointerdown',e=>{
+      if(state.opened.get(id)?.maximized||e.button!==0)return;
+      e.stopPropagation();
+      const rect=element.getBoundingClientRect();
+      state.drag={id,pointerId:e.pointerId,resize:true,startW:rect.width,startH:rect.height,sx:e.clientX,sy:e.clientY};
+      try{rz.setPointerCapture(e.pointerId);}catch{}
+      focusWindow(id);e.preventDefault();
+    });
+    rz.addEventListener('pointermove',e=>{
+      const d=state.drag;if(!d||d.id!==id||!d.resize||d.pointerId!==e.pointerId)return;
+      const area=$('desktopWorkspace');
+      const w=Math.max(300,Math.min(area.clientWidth-8,d.startW+(e.clientX-d.sx)));
+      const h=Math.max(200,Math.min(area.clientHeight-8,d.startH+(e.clientY-d.sy)));
+      element.style.width=`${w}px`;element.style.height=`${h}px`;
+      const win=state.opened.get(id);if(win){win.width=w;win.height=h;}clampWindowRect(element,win);
+    });
+    rz.addEventListener('pointerup',stop);rz.addEventListener('pointercancel',stop);rz.addEventListener('lostpointercapture',stop);
+  }
+}
+function focusWindow(id) {
+  const win=state.opened.get(id);if(!win)return;win.minimized=false;state.active=id;state.z++;
+  // Normal windows: z 20–999; always-on-top: 10000+
+  const base = win.alwaysOnTop ? 10000 : 20;
+  const el=document.querySelector(`[data-window="${id}"]`);
+  if(el){
+    el.classList.remove('is-minimized');
+    el.classList.toggle('is-pinned', !!win.alwaysOnTop);
+    el.style.zIndex = base + state.z;
+    el.classList.add('is-active');
+  }
+  for(const [other, ow] of state.opened){
+    if(other===id) continue;
+    const oel=document.querySelector(`[data-window="${other}"]`);
+    if(!oel) continue;
+    oel.classList.remove('is-active');
+    // Keep pinned windows above normal even when not active
+    if(ow.alwaysOnTop && !win.alwaysOnTop) {
+      oel.style.zIndex = 10000 + (Number(oel.style.zIndex) % 1000 || 1);
+    }
+  }
+  renderTaskbar();
+}
+
+function togglePinWindow(id) {
+  const win = state.opened.get(id);
+  if (!win) return;
+  win.alwaysOnTop = !win.alwaysOnTop;
+  const el = document.querySelector(`[data-window="${id}"]`);
+  if (el) {
+    el.classList.toggle('is-pinned', win.alwaysOnTop);
+    const pin = el.querySelector('.pin-btn');
+    if (pin) pin.classList.toggle('is-on', win.alwaysOnTop);
+  }
+  focusWindow(id);
+  toast(win.alwaysOnTop ? 'Окно поверх остальных' : 'Обычный порядок окон', 'success');
+}
+function minimizeWindow(id) {const win=state.opened.get(id);if(!win)return;win.minimized=true;document.querySelector(`[data-window="${id}"]`)?.classList.add('is-minimized');document.querySelector(`[data-window="${id}"]`)?.classList.remove('is-active');if(state.active===id)state.active=null;const next=[...state.opened.keys()].reverse().find(k=>!state.opened.get(k).minimized);if(next)focusWindow(next);else renderTaskbar();}
+function closeWindow(id) {state.opened.delete(id);if(isTerminalId(id))state.terminals.delete(id);document.querySelector(`[data-window="${id}"]`)?.remove();if(state.active===id)state.active=null;const next=[...state.opened.keys()].reverse().find(k=>!state.opened.get(k).minimized);if(next)focusWindow(next);else renderTaskbar();}
+function maximizeWindow(id) {
+  const win=state.opened.get(id),el=document.querySelector(`[data-window="${id}"]`);if(!win||!el)return;
+  if(!win.maximized){win.oldRect={left:el.style.left,top:el.style.top,width:el.style.width,height:el.style.height};win.maximized=true;el.classList.add('is-maximized');}
+  else{win.maximized=false;el.classList.remove('is-maximized');if(win.oldRect)Object.assign(el.style,win.oldRect);}
+  const maxBtn=el.querySelector('[data-action="maximize-window"]');if(maxBtn){maxBtn.textContent=win.maximized?'❐':'□';maxBtn.title=win.maximized?'Восстановить':'Развернуть';}focusWindow(id);
+}
+function refreshPhoneLab() {
+  if (state.opened?.has('phone')) renderWindow('phone');
+  else if (state._phoneTarget || state.game?.phoneWorld?.access) {
+    /* keep closed until user opens */
+  }
+}
+function renderWindow(id) {const el=document.querySelector(`[data-window="${id}"] [data-content]`);if(!el)return;el.innerHTML=renderApp(id);wireAppContent(id,el);}
+function refreshOpenApps(ids=null) {for(const id of (ids||[...state.opened.keys()]))if(state.opened.has(id))renderWindow(id);renderTaskbar();}
+function wireAppContent(id,el) {
+  if(isTerminalId(id)){
+    const term=getTerm(id);
+    const out=el.querySelector('.terminal-output');
+    if(out){
+      out.addEventListener('scroll',()=>{
+        const nearBottom=(out.scrollHeight-out.scrollTop-out.clientHeight)<48;
+        if(term) term.scrollPin=nearBottom;
+      },{passive:true});
+      scrollTerminalBottom(id, true);
+    }
+    const form=el.querySelector('.terminal-form');
+    form?.addEventListener('submit',async e=>{
+      e.preventDefault();
+      e.stopPropagation();
+      const termNow=getTerm(id);
+      // Allow typing/queue only when not mid-animation hard-lock — still accept commands
+      const input=form.elements.command;
+      const val=input?.value||'';
+      if(!val.trim())return;
+      if(input)input.value='';
+      await runTerminalCommand(id, val);
+      queueMicrotask(()=>{
+        const i=document.querySelector(`[data-window="${id}"] .terminal-form input`);
+        if(i) i.focus({preventScroll:true});
+        scrollTerminalBottom(id, true);
+      });
+    });
+  }
+  if(isBrowserId(id)){
+    const form=el.querySelector('#browserForm')||el.querySelector('.chrome-form');
+    form?.addEventListener('submit',e=>{e.preventDefault();e.stopPropagation();const v=form.elements.address?.value||form.querySelector('input')?.value||'';navigateBrowser(v,id);});
+    el.querySelectorAll('form[data-action-form]').forEach(f=>{
+      f.addEventListener('submit',e=>{
+        e.preventDefault();
+        e.stopPropagation();
+        const kind=f.getAttribute('data-action-form');
+        if(kind==='bank-login'){
+          const fd=new FormData(f);
+          const login=String(fd.get('login')||f.elements.login?.value||'').trim();
+          const password=String(fd.get('password')||f.elements.password?.value||'').trim();
+          if(!login||!password){toast('Введи логин и пароль','error');return;}
+          const r=bankLogin(state.game,login,password);
+          if(!r.ok){toast(r.reason||'Ошибка входа','error');return;}
+          state.bankSessionId=r.sessionId;
+          if(!state.game.bank) state.game.bank={};
+          state.game.bank.sessionId=r.sessionId;
+          toast('Вход в Aster Bank','success');
+          scheduleSave();
+          // open cabinet page on current browser tab
+          try {
+            const sess = state.browserSessions?.get(id);
+            if (sess && sess.tabs && sess.tabs[sess.active] != null) {
+              const tab = sess.tabs[sess.active];
+              tab.page = 'cabinet';
+              tab.title = 'Aster Bank · Кабинет';
+            }
+          } catch (e) {}
+          renderWindow(id);
+          return;
+        }
+        if(kind==='bank-transfer'){
+          const to=(f.elements.to?.value||'').trim();
+          const amount=Number(f.elements.amount?.value||0);
+          const sid=state.bankSessionId||state.game.bank?.sessionId;
+          if(!sid){toast('Нет сессии','error');return;}
+          if(!to){toast('Укажи счёт получателя','error');return;}
+          const r=bankTransfer(state.game,sid,to,amount);
+          if(!r.ok){toast(r.reason||'Ошибка перевода','error');return;}
+          toast(r.message||'Перевод выполнен','success');
+          scheduleSave();
+          renderWindow(id);
+        }
+      });
+    });
+  }
+  if(id==='ide'){
+    const editor=el.querySelector('#nbsEditor');
+    editor?.addEventListener('input',()=>{state.editorText=editor.value;syncNbsHighlight(editor);});
+    editor?.addEventListener('scroll',()=>syncNbsHighlight(editor));
+    if(editor)syncNbsHighlight(editor);
+  }
+}
+
+function renderApp(id) {
+  const g=state.game;
+  if(isTerminalId(id)) return renderTerminal(g, id);
+  if(isBrowserId(id)) return renderBrowser(g, id);
+  switch(id){
+    case 'profile':return renderProfile(g);
+    case 'computer':return renderComputer(g);
+    case 'darkshop':return renderDarkShop(g);
+    case 'forge':return renderForge(g);
+    case 'browser':return renderBrowser(g);
+    case 'map':return renderMap(g);
+    case 'blackwire':return renderBlackWire(g);
+    case 'mail':return renderMail(g);
+    case 'bank':return renderBank(g);
+    case 'files':return renderFiles(g);
+    case 'phone':return renderPhoneLab(g);
+    case 'intel':return renderIntel(g);
+    case 'fbi':return renderFbi();
+    case 'help':return renderHelp();
+    case 'ide':return renderIde(g);
+    default:return `<div class="empty-state"><b>Неизвестное приложение</b><p>Приложение не зарегистрировано.</p></div>`;
+  }
+}
+function renderProfile(g) {
+  const p = g.player;
+  const need = currentLevelNeed();
+  const limit = (typeof xpThresholdForLevel==='function'?xpThresholdForLevel(p.level):BALANCE.xpToLevel[p.level])||p.xp;
+  const base = (typeof xpThresholdForLevel==='function'?xpThresholdForLevel(Math.max(1,p.level-1)):BALANCE.xpToLevel[Math.max(0,p.level-1)])||0;
+  const progress = p.level>=(BALANCE.maxLevel||999)?100:Math.max(0,Math.min(100,(p.xp-base)/Math.max(1,limit-base)*100));
+  const st = g.stats || {};
+  const phonesTotal = Number(st.phonesHacked || st.hackedPhones || 0);
+  const phonesOk = Number(st.successfulPhoneHacks || st.successfulOperations || 0);
+  const earned = Number(p.totalEarned || 0);
+  return `<div class="app-heading"><div><div class="eyebrow">OPERATOR</div><h2>Профиль</h2></div><span class="badge green">ACTIVE</span></div>
+  <section class="profile-hero">
+    <div class="profile-ident">
+      <div class="avatar">${esc((p.nickname||'OP').slice(0,2).toUpperCase())}</div>
+      <div><h3>${esc(p.nickname||'operator')}</h3>
+      <small>TG: ${esc(p.telegramId||'—')}</small></div>
+    </div>
+    <div class="profile-rank"><b>LVL ${p.level}</b><small>OPERATOR</small></div>
+  </section>
+  <div class="panel section-gap">
+    <div class="panel-title"><span>ОПЫТ</span><small>${fmt(p.xp)} XP</small></div>
+    <div class="progress"><i style="width:${progress}%"></i></div>
+    <div class="kv"><span>До след. уровня</span><b>${p.level>=(BALANCE.maxLevel||999)?'MAX':fmt(need)+' XP'}</b></div>
+  </div>
+  <div class="grid-2 section-gap">
+    <div class="stat-box"><span>УРОВЕНЬ</span><strong>${p.level}</strong><small>level</small></div>
+    <div class="stat-box"><span>ОПЫТ</span><strong>${fmt(p.xp)}</strong><small>XP</small></div>
+    <div class="stat-box"><span>ЗАРАБОТАНО</span><strong>${fmt(earned)}</strong><small>всего CR</small></div>
+    <div class="stat-box"><span>БАЛАНС</span><strong>${fmt(g.economy?.credits||0)}</strong><small>сейчас</small></div>
+    <div class="stat-box"><span>ТЕЛЕФОНЫ</span><strong>${fmt(phonesTotal)}</strong><small>взломано всего</small></div>
+    <div class="stat-box"><span>УДАЧНЫЕ</span><strong>${fmt(phonesOk)}</strong><small>успешные взломы</small></div>
+  </div>
+  <div class="kv section-gap"><span>Контракты</span><b>${fmt(p.contractsCompleted||0)}</b></div>
+  <div class="kv"><span>Кошелёк</span><b>${esc(p.walletId||'—')}</b></div>`;
+}
+
+function hardwareDetail(part,item) {
+  if(!item)return '';
+  if(part==='cpu')return `${item.compute} compute units`;
+  if(part==='ram')return `${item.gb} GB RAM`;
+  if(part==='gpu')return `${item.power} graphics units`;
+  if(part==='storage')return `${item.gb} GB SSD`;
+  if(part==='os')return `NULLBYTE OS ${item.level}.0`;
+  return '';
+}
+function renderHardwareUpgrade(g,part,label) {
+  const options=HARDWARE[part],current=options.find(x=>x.level===g.computer[part]),next=options.find(x=>x.level===g.computer[part]+1),bankLocked=bankStatus(g).locked;
+  return `<div class="list-row hardware-upgrade"><div class="list-main"><strong>${label}: ${esc(current.name)}</strong><small>СЕЙЧАС: ${esc(hardwareDetail(part,current))}</small>${next?`<small>СЛЕДУЮЩИЙ: ${esc(next.name)} · ${esc(hardwareDetail(part,next))} · ${fmt(next.price)} CR</small>`:'<small>Достигнут максимальный уровень.</small>'}</div><div class="list-actions">${next?bankLocked?'<span class="badge red">BANK LOCK</span>':`<button class="btn tiny" data-action="upgrade-hardware" data-part="${part}">УЛУЧШИТЬ</button>`:'<span class="badge green">MAX</span>'}</div></div>`;
+}
+function renderComputer(g) {
+  const hw = (part, lvl) => {
+    const list = HARDWARE[part] || [];
+    const row = list.find(x => x.level === lvl) || list[Math.max(0, (lvl||1)-1)] || {};
+    return row.name || (`L${lvl}`);
+  };
+  const c = g.computer || {};
+  const plugs = (c.installedPlugins||[]).filter(id => !(typeof isPluginLocked==='function' && isPluginLocked(id)));
+  const list = plugs.map(id => {
+    const p = getPlugin(id);
+    return `<div class="list-row"><div class="list-main"><strong>${esc(p?.name||id)}</strong><small>${esc(p?.category||'plugin')}</small></div><span class="badge green">ON</span></div>`;
+  }).join('') || '<div class="muted">Нет плагинов</div>';
+  const files = (c.files||[]).length;
+  const net = g.phoneWorld?.network;
+  return `<div class="app-heading"><div><div class="eyebrow">MY COMPUTER</div><h2>Система</h2><p>Комплектующие и плагины</p></div><span class="badge">OS</span></div>
+  <div class="panel">
+    <div class="kv"><span>ОС</span><b>${esc(hw('os', c.os||1))}</b></div>
+    <div class="kv"><span>CPU</span><b>${esc(hw('cpu', c.cpu||1))}</b></div>
+    <div class="kv"><span>RAM</span><b>${esc(hw('ram', c.ram||1))}</b></div>
+    <div class="kv"><span>GPU</span><b>${esc(hw('gpu', c.gpu||1))}</b></div>
+    <div class="kv"><span>Storage</span><b>${esc(hw('storage', c.storage||1))}</b></div>
+    <div class="kv"><span>Файлы</span><b>${files}</b></div>
+    <div class="kv"><span>Сеть</span><b>${net ? esc(net.regionId) : 'OFFLINE'}</b></div>
+  </div>
+  <h3 class="section-gap">Плагины</h3>
+  <div class="list">${list}</div>`;
+}
+
+function renderFiles(g) {
+  const files = [...(g.computer.files||[]), ...(g.editor.files||[])];
+  const usage = getHardwareUsage(g);
+  const selected = files.find(f => f.id === state.selectedFileId) || null;
+  const list = files.length ? files.map(f => {
+    const on = f.id === state.selectedFileId ? 'on' : '';
+    const badge = f.encrypted ? 'ENC' : (f.type || 'file');
+    return `<button type="button" class="list-row file-row ${on}" data-action="file-select" data-id="${esc(f.id)}">
+      <div class="list-main"><strong>${esc(f.name)}</strong><small>${esc(badge)} · ${f.size||1} KB · ${esc(f.path||'/')}</small></div>
+    </button>`;
+  }).join('') : '<div class="empty-state"><b>Нет файлов</b><p>Отчёты анализа появятся после site-analyzer → save.</p></div>';
+  const body = selected
+    ? `<div class="file-viewer">
+        <div class="file-viewer-head">
+          <div><div class="eyebrow">${selected.encrypted?'ENCRYPTED':'FILE'}</div><h3 style="margin:4px 0;font-size:13px">${esc(selected.name)}</h3>
+          <small class="muted">${esc(selected.type||'file')} · ${selected.size||1} KB · ${esc(selected.path||'')}</small></div>
+          <div class="btn-row">
+            <button type="button" class="btn tiny ghost" data-action="file-copy-content" data-id="${esc(selected.id)}">Копировать</button>
+            <button type="button" class="btn tiny danger" data-action="file-delete" data-id="${esc(selected.id)}">Удалить</button>
+          </div>
+        </div>
+        <pre class="file-viewer-body" style="user-select:text;white-space:pre-wrap;max-height:min(420px,55vh);overflow:auto;padding:12px;background:#0a1016;border:1px solid #243540;border-radius:8px;margin-top:10px;font-size:11px;line-height:1.45">${esc(String(selected.content||'(пусто)'))}</pre>
+      </div>`
+    : `<div class="empty-state"><b>Выбери файл</b><p>Слева список · справа содержимое для копирования host / vuln / id.</p></div>`;
+  return `<div class="app-heading"><div><div class="eyebrow">FILE SYSTEM</div><h2>Files</h2><p>Локальные файлы · ${fmt(usage.used/1024)} / ${usage.total/1024} GB</p></div><span class="badge">${files.length}</span></div>
+  <div class="grid-2 section-gap" style="align-items:start;gap:12px">
+    <div class="panel" style="padding:8px;max-height:min(480px,60vh);overflow:auto">${list}</div>
+    <div class="panel" style="padding:12px">${body}</div>
+  </div>`;
+}
+
+
+function renderDarkShop(g) {
+  return `<div class="app-heading"><div><div class="eyebrow">DARKSHOP</div><h2>DarkShop</h2><p>Каталог</p></div><span class="badge">1</span></div>
+  <div class="list section-gap">
+    <div class="list-row">
+      <div class="list-main"><strong>Сервер (rack node)</strong><small>Выделенный узел · визуал</small></div>
+      <span class="badge">1200 €</span>
+    </div>
+  </div>
+  <div class="notice warning section-gap">Покупка пока недоступна — только витрина.</div>
+  <div class="muted small">Комплектующие CPU/RAM — в разработке.</div>`;
+}
+
+function renderPluginCard(g,p) {
+  const installed=getInstalledPlugin(g,p.id);
+  const wip=typeof isPluginLocked==='function'&&isPluginLocked(p.id);
+  const osLocked=g.computer.os<(p.minOs||1),usage=getHardwareUsage(g),space=usage.used+p.storage<=usage.total,bankLocked=bankStatus(g).locked;
+  const blocker=wip?'На доработке':osLocked?`NULLBYTE OS ${(p.minOs||1)}.0`:!space?'Недостаточно места':bankLocked?'Банк заблокирован':'Готов к установке';
+  const status = wip
+    ? '<span class="badge gray">В ДОРАБОТКЕ</span>'
+    : installed
+      ? '<span class="badge green">INSTALLED</span>'
+      : osLocked ? `<span class="badge gray">OS ${(p.minOs||1)}.0</span>`
+      : !space ? '<span class="badge red">NO SPACE</span>'
+      : bankLocked ? '<span class="badge red">BANK LOCK</span>'
+      : `<button class="btn tiny" data-action="install-plugin" data-id="${p.id}" title="${esc(blocker)}">${p.price?'УСТАНОВИТЬ · '+fmt(p.price):'ДОБАВИТЬ'}</button>`;
+  return `<div class="list-row"><div class="list-main"><strong>${esc(p.name)} <span class="muted">v${esc(p.version)}</span></strong><small>${esc(p.category)} · ${esc(p.description)}<br>RAM ${p.ram} GB · ${p.storage} MB · ОС ${(p.minOs||1)}.0+ · ${p.cooldown?`${p.cooldown/1000} сек cooldown`:'без cooldown'}${wip?' · <b>WIP</b>':''}</small><small class="text-blue">${wip?'Закрыто до нового чек-листа. Логика сохранена.':esc(p.effect)}</small></div><div class="list-actions"><button class="btn tiny ghost" data-action="plugin-docs" data-id="${p.id}">ПОДРОБНЕЕ</button>${status}</div></div>`;
+}
+function renderForge(g) {
+  const categories=[...new Set(PLUGINS.map(p=>p.category))];
+  return `<div class="app-heading"><div><div class="eyebrow">NULFORGE / PACKAGE REPOSITORY</div><h2>NULForge</h2><p>Официальный каталог игровых пакетов NULLBYTE.</p></div><span class="badge">${g.computer.installedPlugins.length} INSTALLED</span></div>
+  <div class="notice">Плагины созданы разработчиком. Сейчас web/mobile пакеты помечены «В ДОРАБОТКЕ» — run недоступен. Гейт по уровню снят.</div>
+  ${categories.map(cat=>`<div class="panel section-gap"><div class="panel-title"><span>${esc(cat.toUpperCase())}</span><small>${PLUGINS.filter(p=>p.category===cat).length} PACKAGES</small></div><div class="list">${PLUGINS.filter(p=>p.category===cat).map(p=>renderPluginCard(g,p)).join('')}</div></div>`).join('')}`;
+}
+
+
+function getBrowserSession(winId) {
+  if (!state.browserSessions) state.browserSessions = new Map();
+  if (!state.browserSessions.has(winId)) {
+    state.browserSessions.set(winId, {
+      tabs: [{ id: 'tab_start', siteId: '', page: 'start', title: 'Новая вкладка', history: [{ page: 'start' }], histIdx: 0 }],
+      active: 0
+    });
+  }
+  return state.browserSessions.get(winId);
+}
+
+function activeBrowserWinId() {
+  if (isBrowserId(state.active)) return state.active;
+  for (const id of state.opened.keys()) if (isBrowserId(id) && !state.opened.get(id).minimized) return id;
+  return [...state.opened.keys()].find(isBrowserId) || null;
+}
+
+function ensureBrowserState() {
+  if (!Array.isArray(state.browserTabs)) state.browserTabs = [];
+  if (typeof state.browserActive !== 'number') state.browserActive = 0;
+  if (!Array.isArray(state.browserClosed)) state.browserClosed = [];
+}
+
+function ensureBrowserTab(siteId, page = 'home') {
+  ensureBrowserState();
+  const site = getSite(state.game, siteId);
+  if (!site) return null;
+  let tab = state.browserTabs.find(t => t.siteId === siteId);
+  if (!tab) {
+    tab = {
+      id: `tab_${siteId}_${Date.now().toString(36)}`,
+      siteId,
+      page: page || 'home',
+      title: site.title,
+      history: [{ page: page || 'home' }],
+      histIdx: 0,
+      loading: false
+    };
+    state.browserTabs.push(tab);
+  } else {
+    tab.page = page || tab.page || 'home';
+  }
+  state.browserActive = state.browserTabs.indexOf(tab);
+  state.game.browser.activeSite = siteId;
+  const hist = state.game.browser.history || [];
+  if (hist[0]?.siteId !== siteId) {
+    hist.unshift({ siteId, at: Date.now() });
+    state.game.browser.history = hist.slice(0, 40);
+  }
+  scheduleSave();
+  return tab;
+}
+
+function navigateBrowser(value, winId) {
+  winId = winId || activeBrowserWinId();
+  const input = String(value || '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/$/, '');
+  if (!input) { toast('Введи адрес .null или название сайта.', 'error'); return; }
+  let domain = input, page = 'home';
+  if (input.includes('/')) {
+    const parts = input.split('/');
+    domain = parts[0];
+    page = parts.slice(1).join('/') || 'home';
+  }
+  const site = state.game.world.sites.find(s => s.domain === domain || s.id === domain || s.title.toLowerCase() === domain)
+    || state.game.world.sites.find(s => `${s.title} ${s.domain} ${s.kind}`.toLowerCase().includes(domain));
+  if (!site) { toast('Нет совпадений в сети .null', 'error'); return; }
+  if (!winId) { openApp('browser'); winId = activeBrowserWinId(); }
+  const session = getBrowserSession(winId);
+  let tab = session.tabs.find(t => t.siteId === site.id);
+  if (!tab) {
+    tab = { id: `tab_${site.id}`, siteId: site.id, page, title: site.title, history: [{ page }], histIdx: 0, loading: true };
+    session.tabs.push(tab);
+  } else {
+    tab.page = page;
+    tab.history = (tab.history || []).slice(0, (tab.histIdx || 0) + 1);
+    tab.history.push({ page });
+    tab.histIdx = tab.history.length - 1;
+    tab.loading = true;
+  }
+  session.active = session.tabs.indexOf(tab);
+  state.game.browser.activeSite = site.id;
+  renderWindow(winId);
+  setTimeout(() => { tab.loading = false; if (state.opened.has(winId)) renderWindow(winId); }, 280 + Math.random() * 400);
+}
+
+function browserGoPage(page) {
+  ensureBrowserState();
+  const tab = state.browserTabs[state.browserActive];
+  if (!tab) return;
+  tab.page = page || 'home';
+  tab.history = (tab.history || []).slice(0, tab.histIdx + 1);
+  tab.history.push({ page: tab.page });
+  tab.histIdx = tab.history.length - 1;
+  tab.loading = true;
+  renderWindow('browser');
+  setTimeout(() => { tab.loading = false; if (state.opened.has('browser')) renderWindow('browser'); }, 200);
+}
+
+function browserBack() {
+  const tab = state.browserTabs[state.browserActive];
+  if (!tab || tab.histIdx <= 0) return;
+  tab.histIdx--;
+  tab.page = tab.history[tab.histIdx].page;
+  renderWindow('browser');
+}
+function browserForward() {
+  const tab = state.browserTabs[state.browserActive];
+  if (!tab || tab.histIdx >= tab.history.length - 1) return;
+  tab.histIdx++;
+  tab.page = tab.history[tab.histIdx].page;
+  renderWindow('browser');
+}
+function browserReload() {
+  const tab = state.browserTabs[state.browserActive];
+  if (!tab) return;
+  tab.loading = true;
+  renderWindow('browser');
+  setTimeout(() => { tab.loading = false; if (state.opened.has('browser')) renderWindow('browser'); }, 350);
+}
+function browserNewTab() {
+  ensureBrowserState();
+  state.browserTabs.push({ id: `tab_new_${Date.now()}`, siteId: '', page: 'start', title: 'Новая вкладка', history: [{ page: 'start' }], histIdx: 0, loading: false });
+  state.browserActive = state.browserTabs.length - 1;
+  renderWindow('browser');
+}
+function browserCloseTab(winId, idx) {
+  const session = getBrowserSession(winId || activeBrowserWinId());
+  idx = Number(idx);
+  if (Number.isNaN(idx) || idx < 0 || idx >= session.tabs.length) return;
+  if (session.tabs.length <= 1) {
+    session.tabs = [{ id: 'tab_start', siteId: '', page: 'start', title: 'Новая вкладка', history: [{ page: 'start' }], histIdx: 0 }];
+    session.active = 0;
+  } else {
+    session.tabs.splice(idx, 1);
+    session.active = Math.max(0, Math.min(session.active, session.tabs.length - 1));
+  }
+  if (winId) renderWindow(winId);
+  else renderWindow(activeBrowserWinId());
+}
+
+function renderSitePage(g, site, page, progress) {
+  const locked = site.recoveryAt > Date.now();
+  const access = progress.access;
+  const p = page || 'home';
+
+  if (locked) {
+    return `<div class="site-page site-error"><div class="site-error-code">503</div><h2>Service Recovering</h2><p>${esc(site.domain)} временно недоступен · recovery ${humanLeft(site.recoveryAt - Date.now())}</p></div>`;
+  }
+
+  // Nav helper
+  const nav = (items) => `<nav class="site-nav">${items.map(([pg, lab]) => `<button type="button" class="site-nav-link ${p===pg?'on':''}" data-action="browser-page" data-page="${pg}">${lab}</button>`).join('')}</nav>`;
+
+  
+  if (site.kind === 'trading' || site.id === 'nulltrading') {
+    const tr = ensureTrading(g);
+    const tickers = TRADING_TICKERS || [];
+    const navT = nav([['home','Главная'],['people','Люди'],['profile','Профиль']]);
+    const cards = tickers.map(tk => {
+      const series = tr.series[tk.id] || [tk.base];
+      const sp = tradingSparkline(series, 160, 48);
+      const stroke = sp.up ? '#3dd68c' : '#f07178';
+      return `<div class="nt-card">
+        <div class="nt-card-head"><strong>${esc(tk.name)}</strong><span class="${sp.up?'up':'down'}">${sp.last.toFixed(2)}</span></div>
+        <svg class="nt-spark" viewBox="0 0 160 48" width="100%" height="48" preserveAspectRatio="none"><polyline fill="none" stroke="${stroke}" stroke-width="2" points="${sp.points}"/></svg>
+        <small class="muted">локальный ряд</small>
+      </div>`;
+    }).join('');
+    if (p === 'people') {
+      const seed = g.meta?.seed||'nb';
+      let peopleHtml = '';
+      try {
+        const regs = ['bayshore','midtown','ironreach','southgate','oakridge','shadowline'];
+        const rows = [];
+        for (const rid of regs) {
+          const list = listRegionPhones(rid, seed).slice(0, 4);
+          for (const ph of list) rows.push({ name: ph.ownerName, tick: (TRADING_TICKERS[rows.length%3]||{}).id||'NULLBYTE', stake: 500+((ph.index*97)%4500), region: rid });
+        }
+        peopleHtml = rows.slice(0, 18).map(pe => `<div class="nt-person"><div><b>${esc(pe.name)}</b><small>${esc(pe.tick)} · ${esc(pe.region)}</small></div><span>${Number(pe.stake).toLocaleString('ru-RU')} CR</span></div>`).join('');
+      } catch(e) { peopleHtml = (tr.people||[]).map(pe=>`<div class="nt-person"><div><b>${esc(pe.name)}</b></div><span>${pe.stake}</span></div>`).join(''); }
+
+      return `<div class="site-page site-trading"><header class="site-hero trading"><div class="site-brand">NULL<span>TRADING</span></div>${navT}</header>
+        <div class="site-body"><h2>Люди</h2><div class="nt-people">${peopleHtml}</div></div></div>`;
+    }
+    if (p === 'profile') {
+      return `<div class="site-page site-trading"><header class="site-hero trading"><div class="site-brand">NULL<span>TRADING</span></div>${navT}</header>
+        <div class="site-body"><h2>Профиль</h2>
+        <div class="notice warning">В разработке. Портфель и сделки появятся позже.</div>
+        <p class="muted">Сейчас доступны только котировки и список участников.</p></div></div>`;
+    }
+    return `<div class="site-page site-trading"><header class="site-hero trading"><div class="site-brand">NULL<span>TRADING</span></div>${navT}</header>
+      <div class="site-body">
+        <h1>Биржа Trade</h1>
+        <p class="muted">NULLBYTE · 44weee · tunnel</p>
+        <div class="nt-grid">${cards}</div>
+      </div></div>`;
+  }
+
+  if (site.kind === 'shop') {
+    const products = [
+      { n: 'NullCore CPU kit', price: 420 },
+      { n: 'Mesh RAM stick', price: 180 },
+      { n: 'Harbor SSD 512', price: 310 },
+      { n: 'Order VM-204 (ledger)', price: '—' }
+    ];
+    if (p === 'catalog') {
+      return `<div class="site-page site-shop"><header class="site-hero shop"><div class="site-brand">VOLT<span>MARKET</span></div>${nav([['home','Главная'],['catalog','Каталог'],['orders','Заказы'],['about','О нас']])}</header>
+        <div class="site-body"><h2>Каталог</h2><div class="shop-grid">${products.map(x=>`<div class="shop-card"><strong>${esc(x.n)}</strong><span>${x.price=== '—' ? 'ledger' : x.price+' CR'}</span></div>`).join('')}</div>
+        <p class="site-note">Публичная витрина. Глубокие записи заказа — через операции в Terminal.</p></div></div>`;
+    }
+    if (p === 'orders') {
+      return `<div class="site-page site-shop"><header class="site-hero shop"><div class="site-brand">VOLT<span>MARKET</span></div>${nav([['home','Главная'],['catalog','Каталог'],['orders','Заказы'],['about','О нас']])}</header>
+        <div class="site-body"><h2>Заказы</h2>
+        <div class="data-table"><div class="dt-row head"><span>ID</span><span>Статус</span><span>Сумма</span></div>
+        <div class="dt-row"><span>VM-204</span><span>${access?'visible':'restricted'}</span><span>···</span></div>
+        <div class="dt-row"><span>VM-118</span><span>shipped</span><span>90 CR</span></div></div>
+        <p class="site-note">Артефакт CATALOG-B7 связан с VM-204.</p></div></div>`;
+    }
+    return `<div class="site-page site-shop"><header class="site-hero shop"><div class="site-brand">VOLT<span>MARKET</span></div>${nav([['home','Главная'],['catalog','Каталог'],['orders','Заказы'],['about','О нас']])}</header>
+      <div class="site-body"><h1>Электроника и комплектующие</h1><p>${esc(site.description)}</p>
+      <div class="shop-grid">${products.slice(0,3).map(x=>`<div class="shop-card"><strong>${esc(x.n)}</strong><span>${x.price} CR</span></div>`).join('')}</div>
+      <p class="site-meta">Регион: ${esc(site.region)} · sec ${site.security}/5</p>
+      ${(()=>{const L=state.game.ops?.paymentLinks?.[site.id]; if(L&&L.current!==L.original&&L.expiresAt>Date.now()) return `<div class="notice warning">Checkout diverted (hidden timer)</div>`; return '';})()}
+      <p class="site-meta"></p></div></div>`;
+  }
+
+  if (site.kind === 'bank') {
+    const sessId = state.bankSessionId || state.game.bank?.sessionId;
+    const sess = sessId ? getBankSession(state.game, sessId) : null;
+    const acc = sess ? state.game.npcWorld?.bankAccounts?.[sess.accountId] : null;
+    // If already logged in, never stick on login form
+    if (acc && (p === 'login' || p === 'home')) {
+      p = 'cabinet';
+    }
+    if (!acc && (p === 'login' || p === 'cabinet' || p === 'transfer')) {
+      return `<div class="site-page site-bank"><header class="site-hero bank"><div class="site-brand">ASTER <span>UNION</span></div>${nav([['home','Обзор'],['login','Вход'],['security','Безопасность']])}</header>
+        <div class="site-body"><h2>Вход в кабинет</h2>
+        <p class="muted">Логин и пароль из SMS взломанного телефона (hard+ — всегда в переписке).</p>
+        <form class="bank-login-form" data-action-form="bank-login">
+          <label class="field"><span>Логин</span><input class="field" name="login" autocomplete="off" required></label>
+          <label class="field"><span>Пароль</span><input class="field" name="password" type="password" autocomplete="off" required></label>
+          <button class="btn primary" type="submit">ВОЙТИ</button>
+        </form>
+        <p class="site-note">Сессия ~20 мин · только игровые CR</p></div></div>`;
+    }
+    if (acc) {
+      const tx = (acc.transactions||[]).slice(0,8);
+      return `<div class="site-page site-bank"><header class="site-hero bank"><div class="site-brand">ASTER <span>UNION</span></div>${nav([['home','Обзор'],['cabinet','Кабинет'],['transfer','Перевод']])}</header>
+        <div class="site-body"><h2>Кабинет</h2>
+        <div class="bank-dash"><div class="bank-tile"><span>Счёт</span><strong>${esc(acc.accountNo)}</strong></div><div class="bank-tile"><span>Баланс</span><strong>${fmt(acc.balance)} CR</strong></div><div class="bank-tile"><span>Сессия</span><strong>ACTIVE</strong></div></div>
+        ${p==='transfer'?`<form class="bank-login-form" data-action-form="bank-transfer"><label>Счёт получателя<input class="field" name="to" placeholder="NB-… wallet или AST-…"></label><label>Сумма<input class="field" name="amount" type="number" min="1"></label><button class="btn primary" type="submit">ПЕРЕВЕСТИ</button></form>`:''}
+        <h3>История</h3>
+        ${tx.map(t=>`<div class="forum-row"><strong>${t.type} ${t.amount}</strong><small>${t.to||t.from||''} · ${formatTime(t.at)}</small></div>`).join('')}
+        <div class="btn-row section-gap"><button class="btn tiny" data-action="bank-logout">ВЫЙТИ</button></div>
+        </div></div>`;
+    }
+    return `<div class="site-page site-bank"><header class="site-hero bank"><div class="site-brand">ASTER <span>UNION</span></div>${nav([['home','Обзор'],['login','Вход'],['security','Безопасность']])}</header>
+      <div class="site-body">
+        <div class="bank-dash"><div class="bank-tile"><span>Контур</span><strong>NPC ACCOUNTS</strong></div><div class="bank-tile"><span>Защита</span><strong>${site.security}/5</strong></div><div class="bank-tile"><span>Статус</span><strong>${site.state}</strong></div></div>
+        <p>Aster Union — внутриигровой банк. Счета NPC, переводы, ограниченная сессия.</p>
+        <p class="site-note">Эндгейм-симуляция оператора — в приложении Aster Bank на рабочем столе.</p>
+      </div></div>`;
+  }
+
+  if (site.kind === 'forum') {
+    const threads = [
+      { t: 'Правила симуляции', by: 'mod_cobalt', n: 12 },
+      { t: 'Сборка null-mesh', by: 'night_runner', n: 5 },
+      { t: 'Сигналы с Площади Маяк', by: 'harbor_ops', n: 8 }
+    ];
+    if (p === 'threads') {
+      return `<div class="site-page site-forum"><header class="site-hero forum"><div class="site-brand">COBALT <span>FORUM</span></div>${nav([['home','Лента'],['threads','Темы'],['users','Участники']])}</header>
+        <div class="site-body"><h2>Темы</h2>${threads.map(th=>`<div class="forum-row"><strong>${esc(th.t)}</strong><small>${esc(th.by)} · ${th.n} msg</small></div>`).join('')}
+        <p class="site-note">Полные тексты сообщений — через контракт / Terminal export.</p></div></div>`;
+    }
+    return `<div class="site-page site-forum"><header class="site-hero forum"><div class="site-brand">COBALT <span>FORUM</span></div>${nav([['home','Лента'],['threads','Темы'],['users','Участники']])}</header>
+      <div class="site-body"><h1>Сообщество Cobalt</h1><p>${esc(site.description)}</p>
+      ${threads.slice(0,2).map(th=>`<div class="forum-row"><strong>${esc(th.t)}</strong><small>${esc(th.by)}</small></div>`).join('')}
+      </div></div>`;
+  }
+
+  if (site.kind === 'database') {
+    return `<div class="site-page site-gov"><header class="site-hero gov"><div class="site-brand">CIVIC <span>RECORDS</span></div>${nav([['home','Портал'],['registry','Реестр'],['docs','Документы']])}</header>
+      <div class="site-body">
+        <h1>Муниципальный реестр</h1>
+        <p>Официальный интерфейс. Записи CR-* доступны операторам с Virtual DB Reader.</p>
+        <div class="gov-box"><span>Раздел</span><strong>${p==='registry'?'REGISTRY':'PUBLIC'}</strong></div>
+        <div class="data-table"><div class="dt-row head"><span>Код</span><span>Класс</span><span>Доступ</span></div>
+        <div class="dt-row"><span>CR-29</span><span>archive</span><span>${progress.database||access?'granted':'restricted'}</span></div>
+        <div class="dt-row"><span>CR-11</span><span>public</span><span>open</span></div></div>
+      </div></div>`;
+  }
+
+  if (site.kind === 'utility') {
+    return `<div class="site-page site-util"><header class="site-hero util"><div class="site-brand">GRID<span>WORKS</span></div>${nav([['home','Статус'],['logs','Журналы'],['nodes','Узлы']])}</header>
+      <div class="site-body"><h1>Сетевой контроллер</h1>
+      <div class="util-meters"><div><span>Load</span><b>${30+site.security*8}%</b></div><div><span>Nodes</span><b>14</b></div><div><span>Journal</span><b>GW-11</b></div></div>
+      <p>${esc(site.description)}</p>
+      <p class="site-note">Телеметрия публична частично. Полный журнал — через операции.</p></div></div>`;
+  }
+
+  if (site.kind === 'auto') {
+    return `<div class="site-page site-auto"><header class="site-hero auto"><div class="site-brand">NEON <span>MOTORS</span></div>${nav([['home','Сервис'],['cards','Карточки'],['about','О сервисе']])}</header>
+      <div class="site-body"><h1>Сервисные карточки</h1>
+      <div class="auto-card"><strong>NM-88</strong><span>VIN-SIM-88</span><small>status: workshop</small></div>
+      <div class="auto-card"><strong>NM-12</strong><span>VIN-SIM-12</span><small>status: ready</small></div>
+      <p class="site-note">Авто-механика как отдельная система — LOCKED. Здесь только веб-карточки.</p></div></div>`;
+  }
+
+  if (site.kind === 'device') {
+    return `<div class="site-page site-device"><header class="site-hero device"><div class="site-brand">POCKET <span>MOBILE</span></div>${nav([['home','Устройство'],['apps','Приложения']])}</header>
+      <div class="site-body"><div class="phone-frame"><div class="phone-screen"><strong>PM-22</strong><small>demo handset</small><p>Сеть: NorthWifi</p></div></div>
+      <p>${esc(site.description)}</p>
+      <p class="site-note">Глубокий разбор — map-scanner forensics в Terminal.</p></div></div>`;
+  }
+
+  if (site.kind === 'wifi') {
+    return `<div class="site-page site-wifi"><header class="site-hero wifi"><div class="site-brand">NORTH <span>WIFI</span></div>${nav([['home','Точка'],['status','Статус']])}</header>
+      <div class="site-body"><h1>AP-05 · Площадь Маяк</h1>
+      <div class="wifi-panel"><span>SSID</span><strong>NorthWifi-AP05</strong><span>Signal</span><strong>-48 dBm</strong><span>Clients</span><strong>6</strong></div>
+      <p class="site-note">Параметры точки экспортируются контрактом.</p></div></div>`;
+  }
+
+  // generic
+  return `<div class="site-page site-generic"><header class="site-hero"><div class="site-brand">${esc(site.title)}</div></header>
+    <div class="site-body"><p>${esc(site.description)}</p><p class="site-meta">${esc(site.domain)} · ${esc(site.kind)} · sec ${site.security}</p></div></div>`;
+}
+
+function renderBrowserStart(g) {
+  const sites = g.world.sites;
+  return `<div class="browser-start">
+    <div class="browser-start-hero"><h1>NULLBYTE NET</h1><p>Домены .null</p></div>
+    <form class="browser-start-search" id="browserForm"><input class="field" name="address" placeholder="адрес .null или название" autocomplete="off"><button class="btn primary" type="submit">Перейти</button></form>
+    <div class="browser-start-grid">${sites.map(s=>`<button type="button" class="start-tile kind-${esc(s.kind)}" data-action="browser-tab" data-site="${s.id}"><strong>${esc(s.title)}</strong><small>${esc(s.domain)}</small></button>`).join('')}</div>
+    <div class="browser-start-side">
+      <div><h3>История</h3>${(g.browser.history||[]).slice(0,5).map(h=>{const s=getSite(g,h.siteId);return s?`<button type="button" class="linkish" data-action="browser-tab" data-site="${s.id}">${esc(s.domain)}</button>`:'';}).join('')||'<span class="muted">пусто</span>'}</div>
+      <div><h3>Закладки</h3>${(g.browser.bookmarks||[]).map(id=>{const s=getSite(g,id);return s?`<button type="button" class="linkish" data-action="browser-tab" data-site="${s.id}">${esc(s.title)}</button>`:'';}).join('')||'<span class="muted">нет</span>'}</div>
+    </div>
+  </div>`;
+}
+
+function renderBrowser(g, winId) {
+  winId = winId || activeBrowserWinId() || 'browser-1';
+  const session = getBrowserSession(winId);
+  const browserTabs = session.tabs;
+  const browserActive = session.active;
+  if (!browserTabs.length) {
+    session.tabs = [{ id: 'tab_start', siteId: '', page: 'start', title: 'Новая вкладка', history: [{ page: 'start' }], histIdx: 0 }];
+    session.active = 0;
+  }
+  const tab = session.tabs[session.active] || session.tabs[0];
+  const site = tab.siteId ? getSite(g, tab.siteId) : null;
+  const progress = site ? getSiteProgress(g, site.id) : {};
+  const address = site ? `${site.domain}${tab.page && tab.page !== 'home' ? '/' + tab.page : ''}` : '';
+  const secure = site && site.state === 'online' && !(site.recoveryAt > Date.now());
+
+  const tabsHtml = session.tabs.map((t, idx) => {
+    const s = t.siteId ? getSite(g, t.siteId) : null;
+    const title = s ? s.title : (t.title || 'Новая вкладка');
+    const fav = s ? s.kind.slice(0, 1).toUpperCase() : '+';
+    return `<div class="chrome-tab ${idx===session.active?'on':''}" data-action="browser-activate-tab" data-win="${esc(winId)}" data-idx="${idx}">
+      <span class="chrome-fav">${fav}</span><span class="chrome-tab-title">${esc(title)}</span>
+      <button type="button" class="chrome-tab-x" data-action="browser-close-tab" data-win="${esc(winId)}" data-idx="${idx}" aria-label="Закрыть">×</button>
+    </div>`;
+  }).join('') + `<button type="button" class="chrome-tab-add" data-action="browser-new-tab" data-win="${esc(winId)}" title="Новая вкладка">+</button>`;
+
+  let pageHtml;
+  if (!site || tab.page === 'start') pageHtml = renderBrowserStart(g);
+  else pageHtml = renderSitePage(g, site, tab.page, progress);
+
+  const canBack = tab.histIdx > 0;
+  const canFwd = tab.history && tab.histIdx < tab.history.length - 1;
+
+  return `<div class="browser-app">
+    <div class="chrome-tabs">${tabsHtml}</div>
+    <div class="chrome-toolbar">
+      <button type="button" class="chrome-btn" data-action="browser-back" data-win="${esc(winId)}" ${canBack?'':'disabled'} title="Назад">←</button>
+      <button type="button" class="chrome-btn" data-action="browser-forward" data-win="${esc(winId)}" ${canFwd?'':'disabled'} title="Вперёд">→</button>
+      <button type="button" class="chrome-btn" data-action="browser-reload" data-win="${esc(winId)}" title="Обновить">↻</button>
+      <div class="chrome-omnibox ${tab.loading?'is-loading':''}">
+        <span class="chrome-lock" title="${secure?'Secure · sim TLS':'Not secure'}">${secure?'🔒':'⚠️'}</span>
+        <form id="browserForm" class="chrome-form"><input name="address" value="${esc(address)}" placeholder="Введите адрес .null" autocomplete="off" spellcheck="false"></form>
+        ${tab.loading?'<span class="chrome-spinner"></span>':''}
+      </div>
+      ${site?`<button type="button" class="chrome-btn" data-action="browser-bookmark" data-win="${esc(winId)}" data-site="${site.id}" title="В закладки">☆</button>`:''}
+    </div>
+    <div class="chrome-page ${tab.loading?'is-dim':''}">${pageHtml}</div>
+  </div>`;
+}
+
+
+function renderMap(g) {
+  const selected = state.mapSelected || null;
+  const regions = PHONE_REGIONS || [];
+  const net = g.phoneWorld?.network;
+  const bans = g.phoneWorld?.networkBanUntil || {};
+  const now = Date.now();
+  // fixed positions for 6 regions
+  const pos = {
+    bayshore: { x: 18, y: 28 }, midtown: { x: 48, y: 22 }, ironreach: { x: 78, y: 30 },
+    southgate: { x: 22, y: 68 }, oakridge: { x: 52, y: 62 }, shadowline: { x: 78, y: 72 }
+  };
+  const points = regions.map(r => {
+    const p = pos[r.id] || { x: 50, y: 50 };
+    const banned = isNetworkBanned(g, r.id);
+    return `<button type="button" class="map-point ${selected===r.id?'on':''} ${banned?'banned':''}" style="left:${p.x}%;top:${p.y}%" data-action="map-select" data-id="${esc(r.id)}"><span>${esc(r.name)}</span></button>`;
+  }).join('');
+  const detail = selected ? regions.find(r => r.id === selected) : null;
+  let info = '<span class="muted">Выбери район сети</span>';
+  if (detail) {
+    const banned = isNetworkBanned(g, detail.id);
+    const vis = listRegionPhones(detail.id).length;
+    if (banned) {
+      info = `<strong class="text-red">${esc(detail.name)}</strong>
+        <p class="text-red">НЕДОСТУПНО — бан сети</p>
+        <div class="kv"><span>Статус</span><b class="text-red">BANNED</b></div>
+        <div class="muted small">connect / scan / open недоступны до снятия бана</div>`;
+    } else {
+      info = `<strong>${esc(detail.name)}</strong>
+        <div class="kv"><span>REGION_ID</span><b>${esc(detail.id)}</b></div>
+        <div class="kv"><span>NET_KEY</span><b>${esc(detail.netKey)}</b></div>
+        <div class="kv"><span>SSID</span><b>${esc(detail.ssid)}</b></div>
+        <div class="kv"><span>Видимых устройств</span><b>${vis}</b></div>
+        <div class="kv"><span>Сейчас в сети</span><b>${net?.regionId===detail.id?'CONNECTED':'—'}</b></div>`;
+    }
+  }
+  return `<div class="app-heading"><div><div class="eyebrow">NULLATLAS</div><h2>Карта сетей</h2><p>Районы · NET_KEY · бан</p></div><span class="badge">${regions.length}</span></div>
+  <div class="map-canvas section-gap">${points}</div>
+  <div class="panel section-gap map-net-info">${info}
+  <div class="kv section-gap"><span>Активная сеть</span><b>${net ? esc(net.regionId)+' · '+esc(net.netKey||'') : 'OFFLINE'}</b></div>
+  </div>`;
+}
+
+function missionSteps(m, g) {
+  if (!m) return [];
+  if (m.category === 'phone' || String(m.id||'').startsWith('phone')) {
+    const reg = m.regionId || 'bayshore';
+    const who = m.ownerName || m.ownerHint || 'цель';
+    const num = m.phoneNumber || '—';
+    const taskMap = { contacts:'собрать контакты', msgs:'сохранить SMS/переписку', gallery:'экспорт галереи', lock:'блокировка 30 мин', access:'открыть сессию телефона' };
+    const task = taskMap[m.task] || (m.task || 'собрать данные');
+    return [
+      `Сеть региона: ${reg}`,
+      `Номер телефона: ${num}`,
+      `Владелец (ориентир): ${who}`,
+      `Что сделать: ${task}`,
+      `1. run net-link → connect ${reg}`,
+      `2. run net-analyzer → scan → save report`,
+      `3. В отчёте сети ${reg} найди строку с номером ${num} (имя ${who})`,
+      `4. run phone-access → open <PHONE_ID из этой строки отчёта>`,
+      `5. Phone Lab: ${task}, при необходимости сохрани файл`,
+      `6. N-Mail → кому: ${m.client} → вложение → отправить`
+    ];
+  }
+  return ['Только телефонные контракты активны.'];
+}
+
+
+function renderMissionGuide(m, g) {
+  const site = getSite(g, m.target);
+  const loc = LOCATIONS.find(l => (l.pois || []).includes(m.target));
+  const tools = (m.requiredPlugins || []).map(id => getPlugin(id)?.name || id).join(' · ') || 'Базовые стартовые';
+  const steps = missionSteps(m, g).map(s => `<li>${s}</li>`).join('');
+  return `<div class="panel section-gap mission-guide">
+    <div class="panel-title"><span>ПОЛНЫЙ ГАЙД · ${esc(m.id)}</span><button class="btn tiny ghost" data-action="mission-close-guide">ЗАКРЫТЬ</button></div>
+    ${(m.regionId||m.phoneNumber)?`<div class="notice section-gap"><b>Сеть:</b> ${esc(m.regionId||'—')} · <b>Номер:</b> ${esc(m.phoneNumber||'—')} · <b>Ориентир:</b> ${esc(m.ownerName||m.ownerHint||'—')}</div>`:''}
+    <div class="kv"><span>Название</span><b>${esc(m.title)}</b></div>
+    <div class="kv"><span>Клиент</span><b>${esc(m.client)}</b></div>
+    <div class="kv"><span>Цель</span><b>${esc(site?.title || m.target)} · ${esc(site?.domain || '—')}</b></div>
+    <div class="kv"><span>Район</span><b>${esc(loc?.name || site?.region || '—')} / ${esc(site?.district || '—')}</b></div>
+    <div class="kv"><span>Сложность / SEC</span><b>${esc(m.difficulty)} · ${site?.security ?? '—'}</b></div>
+    <div class="kv"><span>Награда</span><b class="text-green">+${fmt(m.reward)} CR · +${fmt(m.xp)} XP</b></div>
+    <div class="kv"><span>Плагины</span><b>${esc(tools)}</b></div>
+    <div class="divider"></div>
+    <p><b>Задача:</b> ${esc(m.objective)}</p>
+    <p class="muted small"><b>Подсказка:</b> ${esc(m.hint)}</p>
+    <div class="divider"></div>
+    <div class="panel-title"><span>ЧТО ДЕЛАТЬ ПО ШАГАМ</span></div>
+    <ol class="mission-steps">${steps}</ol>
+    <div class="notice section-gap">Команды в Terminal для миссий не нужны. Вся цепочка выполняется кнопками в Browser. N-Mail — только для финальной отправки файла.</div>
+    <div class="btn-row">${m.status==='available'?`<button class="btn primary" data-action="accept-mission" data-id="${m.id}">ПРИНЯТЬ</button>`:m.status==='accepted'?`<span class="badge amber">В РАБОТЕ</span>`:m.status==='submitted'?`<span class="badge green">НА ПРОВЕРКЕ</span>`:''}</div>
+  </div>`;
+}
+
+
+function renderBlackWire(g) {
+  const now = Date.now();
+  const boardLeft = typeof missionBoardTimer === 'function' ? missionBoardTimer(g, now) : 0;
+  const boardNotice = '<div class="notice warning section-gap">Контракты по сайтам и mobile закрыты на доработку. Новая ветка — после чек-листа.</div>';
+  const boardMin = Math.floor(boardLeft / 60000);
+  const boardSec = Math.floor((boardLeft % 60000) / 1000);
+  const boardIds = new Set(g.intel?.boardIds || []);
+  const available = g.missions.items.filter(m => m.status === 'available' && (boardIds.size ? boardIds.has(m.id) : true));
+  const active = g.missions.items.filter(m => m.status === 'accepted' || m.status === 'submitted');
+  let selected = state.selectedMissionId ? g.missions.items.find(x => x.id === state.selectedMissionId) : null;
+  if (selected && String(selected.id||'').startsWith('phone-')) {
+    try { selected._bound = false; bindPhoneMissionTarget(selected, g.meta?.seed||'nb'); } catch(e){}
+  }
+  const card = m => {
+    const site = getSite(g, m.target);
+    return `<article class="contract-card ${state.selectedMissionId===m.id?'is-selected':''}">
+      <div class="contract-top"><strong>${esc(m.title)}</strong><span class="badge ${m.status==='accepted'?'amber':m.status==='submitted'?'green':'gray'}">${m.status==='accepted'?'ACTIVE':m.status==='submitted'?'VERIFYING':(m.category||'JOB').toUpperCase()}</span></div>
+      <p>${esc(m.objective)}</p>
+      <div class="contract-meta"><span>ID ${esc(m.id)}</span><span>ЦЕЛЬ ${esc(site?.domain||m.target)}</span><span>${esc(m.difficulty)}</span></div>
+      <div class="contract-meta section-gap"><span class="text-green">+${fmt(m.reward)} CR</span><span>+${fmt(m.xp)} XP</span><span>${esc(m.client)}</span></div>
+      <div class="divider"></div>
+      <div class="small muted">${esc(m.hint||'')}</div>
+      <div class="btn-row">
+        <button class="btn tiny" data-action="mission-details" data-id="${m.id}">ДЕТАЛИ</button>
+        ${m.status==='available'?`<button class="btn primary" data-action="accept-mission" data-id="${m.id}">ПРИНЯТЬ</button>`:''}
+        ${m.status==='accepted'?`<button class="btn tiny danger" data-action="cancel-mission" data-id="${m.id}">ОТМЕНИТЬ</button>`:''}
+        ${m.status==='submitted'?`<span class="badge green">ПРОВЕРКА · ${humanLeft(m.verifyAt-now)}</span>`:''}
+      </div>
+    </article>`;
+  };
+  return `<div class="app-heading"><div><div class="eyebrow">BLACKWIRE / CONTRACT BOARD</div><h2>BlackWire</h2><p>3–4 предложения · ротация 20 мин · активные сохраняются</p></div><span class="badge">SOLO</span></div>
+  <div class="grid-3">
+    <div class="stat-box"><span>OFFERS</span><strong>${available.length}</strong><small>доступно сейчас</small></div>
+    <div class="stat-box"><span>ACTIVE</span><strong>${active.length}</strong><small>в работе</small></div>
+    <div class="stat-box"><span>ROTATION</span><strong>${String(boardMin).padStart(2,'0')}:${String(boardSec).padStart(2,'0')}</strong><small>до смены доски</small></div>
+  </div>
+  ${active.length?`<div class="panel section-gap"><div class="panel-title"><span>АКТИВНЫЕ</span></div><div class="list">${active.map(card).join('')}</div></div>`:''}
+  <div class="section-gap list">${available.length?available.map(card).join(''):'<div class="empty-state"><b>Нет предложений</b><p>Дождись ротации доски.</p></div>'}</div>
+  ${selected?renderMissionGuide(selected,g):''}
+  <div class="notice section-gap">Отмена активного контракта снимает его без награды. Собранные артефакты остаются.</div>`;
+}
+
+function terminalPrompt(term) {
+  const nick = (state.game?.player?.nickname || 'user').toLowerCase().replace(/[^a-z0-9_-]/g, '') || 'user';
+  if (state.game?.ops?.serverSession && !term?.plugin) {
+    return nick + '@' + state.game.ops.serverSession.domain + ':~$';
+  }
+  if (term?.plugin) {
+    const p = getPlugin(term.plugin);
+    const short = ((p && p.id) || term.plugin).replace(/[^a-z0-9]/gi, '').slice(0, 12);
+    return nick + '@nullbyte-os:' + short + '$';
+  }
+  return nick + '@nullbyte-os:~$';
+}
+
+function scrollTerminalBottom(termId, force = false) {
+  const out = document.querySelector(`[data-window="${termId}"] .terminal-output`);
+  if (!out) return;
+  const term = getTerm(termId);
+  if (!force && term && !term.scrollPin) return;
+  requestAnimationFrame(() => {
+    out.scrollTop = out.scrollHeight + 400;
+    requestAnimationFrame(() => { out.scrollTop = out.scrollHeight + 400; });
+  });
+}
+
+function termAdd(termId, text, type = '') {
+  const term = getTerm(termId);
+  if (!term) return;
+  term.lines.push({ text, type });
+  term.lines = term.lines.slice(-200);
+  const out = document.querySelector(`[data-window="${termId}"] .terminal-output`);
+  if (out) {
+    const row = document.createElement('div');
+    row.className = 'term-line' + (type ? ' ' + type : '');
+    row.textContent = text;
+    out.appendChild(row);
+    if (term.scrollPin !== false) out.scrollTop = out.scrollHeight;
+  }
+}
+
+
+function pluginBanner(pluginId) {
+  const skins = {
+    'net-link': {
+      color: 'blue',
+      lines: [
+        '  ╭──── NET LINK ────╮',
+        '  │  ≈≈ radio mesh  │',
+        '  │  ░░ iface up ░░ │',
+        '  ╰─────────────────╯'
+      ]
+    },
+    'net-analyzer': {
+      color: 'blue',
+      lines: [
+        '  ┌─ NET ANALYZER ─┐',
+        '  │ ▓▓▓ scan grid  │',
+        '  │ ··· PHONE_ID ·│',
+        '  └────────────────┘'
+      ]
+    },
+    'phone-access': {
+      color: 'green',
+      lines: [
+        '  ╔═ PHONE ACCESS ═╗',
+        '  ║  ▣ unlock sim  ║',
+        '  ║  → handset tty ║',
+        '  ╚════════════════╝'
+      ]
+    },
+    'mail-drop': {
+      color: 'blue',
+      lines: [
+        '  ◆ MAIL DROP ◆',
+        '  { payload.seal }',
+        '  → N-Mail attach'
+      ]
+    },
+    'sms-bomber': {
+      color: 'error',
+      lines: [
+        '  !! SMS BOMBER !!',
+        '  >>> flood queue',
+        '  *** sim only ***'
+      ]
+    },
+    'bank-peek': {
+      color: 'blue',
+      lines: [
+        '  〔 BANK PEEK 〕',
+        '  $ notes / ledger',
+        '  virtual only'
+      ]
+    }
+  };
+  const s = skins[pluginId];
+  if (s) return s.lines.map(t => ({ text: t, type: s.color }));
+  const p = getPlugin(pluginId);
+  const name = (p?.name || pluginId).toUpperCase();
+  return [
+    { text: `╔══ ${name} ══╗`, type: 'blue' },
+    { text: `║ module://${pluginId}`, type: 'muted' },
+    { text: `╚══════════════╝`, type: 'blue' }
+  ];
+}
+
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+
+function clearTerminalView(termId) {
+  const term = getTerm(termId);
+  if (!term) return;
+  term.lines = [];
+  const out = document.querySelector(`[data-window="${termId}"] .terminal-output`);
+  if (out) out.innerHTML = '';
+}
+
+
+
+async function showPluginDashboard(termId, pluginId) {
+  const g = state.game;
+  const net = g.phoneWorld?.network;
+  const t = () => new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  if (pluginId === 'net-link') {
+    const lines = [
+      { t: 'NET LINK  // SECURE CHANNEL BRIDGE', c: 'green' },
+      { t: `TIME ${t()}`, c: 'muted' },
+      { t: '────────────────────────────────────────', c: 'green' },
+      { t: net ? `LINK: ESTABLISHED ■  REGION: ${net.regionId}` : 'LINK: STANDBY ■  REGION: —', c: net ? 'green' : 'muted' },
+      { t: net ? `NET_KEY: ${net.netKey||'—'}  SSID: ${net.ssid||'—'}` : 'NET_KEY: —  SSID: —', c: 'muted' },
+      { t: '────────────────────────────────────────', c: 'green' },
+    ];
+    for (const r of PHONE_REGIONS) {
+      const ban = isNetworkBanned(g, r.id);
+      lines.push({ t: `${ban?'⊘':'●'} ${r.id.padEnd(12)} ${r.netKey} ${ban?'BANNED':(net?.regionId===r.id?'CONNECTED':'idle')}`, c: ban ? 'error' : 'muted' });
+    }
+    lines.push({ t: 'cmds: connect <region> · disconnect · status · list · exit', c: 'blue' });
+    for (const L of lines) { termAdd(termId, L.t, L.c); await sleep(8); }
+  } else if (pluginId === 'net-analyzer') {
+    const lines = [
+      { t: 'NET ANALYZER v2.1  // INTEL SUITE', c: 'green' },
+      { t: net ? `CAPTURE ON · ${net.regionId} · ${net.netKey}` : 'CAPTURE OFF · connect network first', c: net ? 'green' : 'error' },
+    ];
+    if (net) {
+      const phones = listRegionPhones(net.regionId).slice(0, 8);
+      lines.push({ t: `VISIBLE ${listRegionPhones(net.regionId).length} devices (sample):`, c: 'blue' });
+      for (const p of phones) {
+        lines.push({ t: `${p.id}  ${p.ownerName}  ${p.role}  ${p.protection}`, c: 'muted' });
+      }
+    }
+    lines.push({ t: 'cmds: scan · status · help · exit', c: 'blue' });
+    for (const L of lines) { termAdd(termId, L.t, L.c); await sleep(8); }
+  } else if (pluginId === 'phone-access') {
+    const tid = state._phoneTarget || g.phoneWorld?.activeSession?.phoneId;
+    const phone = tid ? findPhone(tid) : null;
+    const acc = phone ? (g.phoneWorld?.access?.[phone.id] || {}) : {};
+    const lines = [
+      { t: '>>> PHONE ACCESS  // DEVICE LINK MODULE', c: 'green' },
+      { t: `TIME ${t()}  USER root`, c: 'muted' },
+      { t: '────────────────────────────────────────', c: 'green' },
+      { t: phone ? `TARGET: ${phone.id}  ${phone.ownerName}` : 'TARGET: IDLE', c: phone ? 'green' : 'muted' },
+      { t: phone ? `AUTH: ${acc.unlocked?'UNLOCKED':(acc.attackOk?'PIN READY':'LOCKED')}  PROT: ${phone.protection}` : 'AUTH: —', c: 'muted' },
+      { t: phone ? `MODEL ${phone.model}  ROLE ${phone.role}  ${phone.number}` : 'CHANNEL: CLOSED', c: 'muted' },
+      { t: net ? `NET ${net.regionId}` : 'NET OFFLINE', c: net ? 'muted' : 'error' },
+      { t: 'cmds: open <PHONE_ID> · attack · block · disconnect · status · exit', c: 'blue' },
+    ];
+    for (const L of lines) { termAdd(termId, L.t, L.c); await sleep(8); }
+  } else {
+    await animatePluginBoot(termId, pluginId);
+  }
+  const win = document.querySelector(`[data-window="${termId}"]`);
+  const inp = win?.querySelector('.term-inline-input');
+  if (inp) try { inp.focus({ preventScroll: true }); } catch (e) {}
+}
+
+async function enterPluginWorkspace(termId, pluginId) {
+  // remember focus — do NOT blur keyboard on mobile
+  const keep = document.querySelector(`[data-window="${termId}"] .term-inline-input, [data-window="${termId}"] .terminal-form input`);
+  clearTerminalView(termId);
+  await showPluginDashboard(termId, pluginId);
+  const term = getTerm(termId);
+  const win = document.querySelector(`[data-window="${termId}"]`);
+  const prompt = terminalPrompt(term);
+  win?.querySelectorAll('.term-inline-prompt, .term-prompt-label').forEach(el => { el.textContent = prompt; });
+  const tool = win?.querySelector('.terminal-toolbar .term-mode');
+  if (tool) tool.textContent = pluginId;
+  queueMicrotask(() => {
+    const inp = document.querySelector(`[data-window="${termId}"] .term-inline-input, [data-window="${termId}"] .terminal-form input`);
+    if (inp) {
+      try { inp.focus({ preventScroll: true }); } catch (e) { try { inp.focus(); } catch (e2) {} }
+    }
+  });
+}
+
+async function leavePluginWorkspace(termId) {
+  clearTerminalView(termId);
+  const term = getTerm(termId);
+  termAdd(termId, 'NULLBYTE TTY', 'green');
+  termAdd(termId, 'plugins · help · clear · status', 'muted');
+  termAdd(termId, 'run <plugin>  — net-link | net-analyzer | phone-access', 'blue');
+  const win = document.querySelector(`[data-window="${termId}"]`);
+  const prompt = terminalPrompt(term);
+  win?.querySelectorAll('.term-inline-prompt, .term-prompt-label').forEach(el => { el.textContent = prompt; });
+  const tool = win?.querySelector('.terminal-toolbar .term-mode');
+  if (tool) tool.textContent = 'tty';
+}
+
+async function animatePluginBoot(termId, pluginId) {
+  const t = () => new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const banners = {
+    'net-link': [
+      { t: 'NET LINK                                          △', c: 'green' },
+      { t: '// SECURE CHANNEL BRIDGE', c: 'muted' },
+      { t: 'TERMINAL v2.7.1          SECURE SESSION ■', c: 'muted' },
+      { t: '────────────────────────────────────────────────', c: 'green' },
+      { t: 'LINK: ESTABLISHED ■  ENC: AES-NULL  LATENCY: 12ms', c: 'green' },
+      { t: '────────────────────────────────────────────────', c: 'green' },
+      { t: 'PEER NODES [6]                    HOP PATH [TRACE]', c: 'blue' },
+      { t: 'NODE   ADDRESS            RTT   STATUS', c: 'muted' },
+      { t: '● N01  172.16.0.7:48101   11ms  ACTIVE    LOCAL [SELF]', c: 'muted' },
+      { t: '● N02  172.16.0.15:48101  14ms  ACTIVE      ↓ N01 [172.16.0.7]', c: 'muted' },
+      { t: '● N03  172.16.0.3:48101    9ms  ACTIVE      ↓ N03 [172.16.0.3]', c: 'muted' },
+      { t: '● N04  172.16.0.21:48101  18ms  ACTIVE      ↓ N04 [172.16.0.21]', c: 'muted' },
+      { t: '○ N05  172.16.0.9:48101   13ms  IDLE        ↓ N02 [172.16.0.15]', c: 'muted' },
+      { t: '● N06  172.16.0.42:48101  16ms  ACTIVE', c: 'muted' },
+      { t: 'LAST SCAN: now | ACTIVE: 5 | IDLE: 1 | HOPS: 4 | PATH: 12ms', c: 'muted' },
+      { t: '────────────────────────────────────────────────', c: 'green' },
+      { t: 'BANDWIDTH USAGE                   SESSION KEYS 🔒', c: 'blue' },
+      { t: 'UPLINK   8.73 / 25.00 Mbps  ████████░░░░ 34%', c: 'muted' },
+      { t: 'DOWNLINK 21.46 / 50.00 Mbps ██████████░░ 42%', c: 'muted' },
+      { t: 'CAP: 25M↑ / 50M↓ | QOS: STANDARD', c: 'muted' },
+      { t: 'SID · AUTH/ENC/HMAC masked | KEY ROT on connect', c: 'muted' },
+      { t: '────────────────────────────────────────────────', c: 'green' },
+      { t: '↑ UPLINK  pkts 1.23M  bytes 1.48GB  err 0  drop 7', c: 'muted' },
+      { t: '↓ DOWN    pkts 2.75M  bytes 3.62GB  err 0  drop 3', c: 'muted' },
+      { t: '────────────────────────────────────────────────', c: 'green' },
+      { t: 'cmds: connect <region> · disconnect · status · list · help · exit', c: 'blue' },
+      { t: `> net_link --bridge   ${t()}`, c: 'green' }
+    ],
+    'net-analyzer': [
+      { t: 'NET ANALYZER v2.1', c: 'green' },
+      { t: '// NETWORK INTELLIGENCE SUITE', c: 'muted' },
+      { t: '[ LIVE CAPTURE + TOPOLOGY ANALYSIS ]', c: 'blue' },
+      { t: '────────────────────────────────────────────────', c: 'green' },
+      { t: '● LIVE TRAFFIC LOG          UPDATING…    TOPOLOGY L3', c: 'blue' },
+      { t: '23:46:52 TCP  SYN  192.168.1.23:443 → 10.0.0.5:51234', c: 'muted' },
+      { t: '23:46:53 UDP  QUERY 192.168.1.8:53 → 10.0.0.3:5353', c: 'muted' },
+      { t: '23:46:53 TCP  ACK  10.0.0.5:51234 → 192.168.1.23:443', c: 'muted' },
+      { t: '23:46:54 ICMP ECHO 192.168.1.1 → 10.0.0.1', c: 'muted' },
+      { t: '23:46:55 TCP  SYN  192.168.1.45:80 → 10.0.0.7:49876', c: 'muted' },
+      { t: '23:46:56 UDP  STREAM 10.0.0.9:12345 → 192.168.1.15:53', c: 'muted' },
+      { t: '23:46:58 ARP  REQUEST WHO HAS 10.0.0.8? TELL 192.168.1.1', c: 'muted' },
+      { t: '23:47:00 DNS  RESPONSE 10.0.0.3:53 → 192.168.1.8:5353', c: 'muted' },
+      { t: '…', c: 'muted' },
+      { t: 'BUFFER: 1024 PACKETS    FILTER: ANY', c: 'muted' },
+      { t: 'TOPO: GW 10.0.0.1 · IDS · DNS · SRV · DB · users/iot/cam', c: 'muted' },
+      { t: '────────────────────────────────────────────────', c: 'green' },
+      { t: 'scan → type filename to save full phone report', c: 'blue' },
+      { t: 'cmds: scan · status · help · exit', c: 'blue' },
+      { t: `> net_analyze --deep   ${t()}`, c: 'green' }
+    ],
+    'phone-access': [
+      { t: '>>> PHONE ACCESS                    SYS: TERM-77', c: 'green' },
+      { t: '// DEVICE LINK MODULE               USER: root', c: 'muted' },
+      { t: `TIME: ${t()}`, c: 'muted' },
+      { t: '────────────────────────────────────────────────', c: 'green' },
+      { t: 'TARGET: IDLE    AUTH: LOCKED    CHANNEL: CLOSED 🔒', c: 'muted' },
+      { t: '────────────────────────────────────────────────', c: 'green' },
+      { t: '--[ DEVICE PROFILE ]--     --[ PHONE DEVICE ]--', c: 'blue' },
+      { t: 'DEVICE ID : (open PH-…)     link idle', c: 'muted' },
+      { t: 'MODEL     : —               signal ——', c: 'muted' },
+      { t: 'OS VER    : —               SECURE CHANNEL off', c: 'muted' },
+      { t: 'STATUS    : WAIT', c: 'muted' },
+      { t: '[ LINK STATE: STANDBY ]', c: 'muted' },
+      { t: '────────────────────────────────────────────────', c: 'green' },
+      { t: '--[ SMS / CALLS / CONTACTS after unlock in Phone Lab ]--', c: 'blue' },
+      { t: 'open → attack → PIN → Phone Lab home', c: 'muted' },
+      { t: 'block — permanent lock of target device', c: 'muted' },
+      { t: '────────────────────────────────────────────────', c: 'green' },
+      { t: 'cmds: open <PHONE_ID> · attack · block · status', c: 'blue' },
+      { t: '      disconnect · help · exit', c: 'blue' },
+      { t: `> phone_access --link   ${t()}`, c: 'green' }
+    ]
+  };
+  const list = banners[pluginId] || [{ t: `┌─ ${pluginId}`, c: 'blue' }, { t: '│ ready', c: 'green' }];
+  for (const line of list) {
+    termAdd(termId, line.t, line.c || 'muted');
+    await sleep(12);
+  }
+}
+
+
+
+
+
+
+async function animateWorkTimed(termId, pluginId, totalMs, mode) {
+  const start = performance.now();
+  const regions = ['BAYS','MIDT','IRON','SOUT','OAKR','SHAD'];
+  const randMac = () => [...Array(6)].map(() => ((Math.random()*256)|0).toString(16).padStart(2,'0')).join(':');
+  const randPhone = () => `PH-${regions[(Math.random()*regions.length)|0]}-${String((Math.random()*550)|0).padStart(4,'0')}`;
+  const randIp = () => `172.16.${(Math.random()*40|0)}.${(1+Math.random()*250|0)}`;
+  const randIpPub = () => `10.0.${(Math.random()*20|0)}.${(1+Math.random()*250|0)}`;
+  const randHex = (n=6) => [...Array(n)].map(() => ((Math.random()*16)|0).toString(16)).join('');
+  const randBar = (pct) => {
+    const f = Math.max(0, Math.min(20, Math.round(pct/5)));
+    return '█'.repeat(f) + '░'.repeat(20-f);
+  };
+  const randPin = () => String(1000 + ((Math.random()*9000)|0));
+
+  const titles = {
+    'net-link': 'NET LINK · connect bridge',
+    'net-analyzer': 'NET ANALYZER · deep sweep',
+    'phone-access': mode === 'attack' ? 'PHONE ACCESS · brute PIN' : mode === 'open' ? 'PHONE ACCESS · device link' : 'PHONE ACCESS · work'
+  };
+  termAdd(termId, `┌─ ${titles[pluginId] || pluginId}`, 'green');
+  let step = 0;
+  while (performance.now() - start < totalMs) {
+    step++;
+    const elapsed = performance.now() - start;
+    const pct = Math.min(99, Math.round((elapsed / totalMs) * 100));
+
+    if (pluginId === 'net-link') {
+      const lines = [
+        `│ peer N0${1+(step%6)}  ${randIp()}:48101  rtt=${(5+Math.random()*20)|0}ms  ACTIVE`,
+        `│ hop  LOCAL → N0${1+(step%4)} → N0${2+(step%3)}  path_lat=${(8+Math.random()*15)|0}ms`,
+        `│ bssid=${randMac()}  lease=${(Math.random()*40+10)|0}s  qos=STANDARD`,
+        `│ uplink ${(Math.random()*12+2).toFixed(2)} Mbps  [${randBar(20+step*3)}]`,
+        `│ session ${randHex(8)}-${randHex(4)}  enc=AES-NULL`,
+        `│ AUTH handshake ${step}  nonce=0x${randHex(8)}`
+      ];
+      termAdd(termId, lines[step % lines.length], 'muted');
+      if (step % 3 === 0) termAdd(termId, `│ bridge ${pct}%  [${randBar(pct)}]`, 'blue');
+    } else if (pluginId === 'net-analyzer') {
+      const proto = ['TCP','UDP','ICMP','ARP','DNS'][step%5];
+      const lines = [
+        `│ ${String(23+(step%37)).padStart(2,'0')}:${String(40+(step%20)).padStart(2,'0')}:${String(step%60).padStart(2,'0')} ${proto}  ${randIpPub()} → ${randIp()}`,
+        `│ ${randPhone()}  rssi=-${40+((Math.random()*45)|0)}  mac=${randMac()}`,
+        `│ TOPO  node ${randIpPub()}  label=USER-${10+(step%90)}  L3`,
+        `│ DPI  flag=${['SYN','ACK','FIN','RST','DATA'][step%5]}  len=${40+((Math.random()*1400)|0)}`,
+        `│ registry idx=${(step*17)%550}  hash=0x${randHex(6)}`,
+        `│ BUFFER ${Math.min(1024, step*48)}/1024  FILTER=ANY`
+      ];
+      termAdd(termId, lines[step % lines.length], 'muted');
+      if (step % 4 === 0) termAdd(termId, `│ SCAN ${pct}%  [${randBar(pct)}]  devices≈${Math.min(250, step*9)}`, 'blue');
+    } else if (pluginId === 'phone-access' && mode === 'attack') {
+      const tryPin = randPin();
+      const lines = [
+        `│ brute  try=${tryPin}  entropy=${(Math.random()*8+1).toFixed(2)}  batch=${1000+((Math.random()*8000)|0)}`,
+        `│ dict  wordlist=${['rock','null','mesh','grid','pulse'][step%5]}  hit=0`,
+        `│ mask  ????  cand=${(Math.random()*9999)|0}  gpu_kernel=pin4`,
+        `│ side-channel  jitter=${((Math.random()*12)+1).toFixed(1)}ms  sample=${step}`,
+        `│ oracle  resp=0x${randHex(4)}  noise=${(Math.random()*100)|0}%`
+      ];
+      termAdd(termId, lines[step % lines.length], 'muted');
+      if (step % 2 === 0) {
+        const errs = [
+          `│ ! DEFENSE reject pin ${tryPin}`,
+          `│ ! watchdog tick 0x${randHex(6)}`,
+          `│ ! rate-limit backoff ${((Math.random()*400)|0)}ms`,
+          `│ ! integrity mismatch block=${step}`,
+          `│ ! crypto noise floor`
+        ];
+        termAdd(termId, errs[step % errs.length], 'error');
+      }
+      if (step % 4 === 0) termAdd(termId, `│ CRACK ${pct}%  [${randBar(pct)}]  candidates≈${step*240}`, 'blue');
+    } else if (pluginId === 'phone-access' && mode === 'open') {
+      const lines = [
+        `│ link  target=${randPhone()}  channel=ENC`,
+        `│ signal  ${(Math.random()*5+1)|0}/5  rssi=-${30+((Math.random()*40)|0)} dBm`,
+        `│ profile  model=handset  os=vOS  ip=${randIp()}`,
+        `│ auth  state=HANDSHAKE  token=0x${randHex(8)}`,
+        `│ tunnel  hop=${1+(step%3)}  rtt=${(4+Math.random()*18)|0}ms`,
+        `│ vault  session=${randHex(4)}…${randHex(4)}  ttl=300s`
+      ];
+      termAdd(termId, lines[step % lines.length], 'muted');
+      if (step % 2 === 0) termAdd(termId, `│ LINK ${pct}%  [${randBar(pct)}]`, 'blue');
+    } else if (pluginId === 'phone-access') {
+      termAdd(termId, `│ probe surface=${['lock','svc','fs','ipc','radio'][step%5]}  0x${randHex(6)}`, 'muted');
+    } else {
+      termAdd(termId, `│ · working ${pct}%`, 'muted');
+    }
+    await sleep(Math.max(70, totalMs / 40));
+  }
+  termAdd(termId, `│ [${'█'.repeat(20)}] 100%`, 'green');
+  termAdd(termId, `└─ READY`, 'green');
+}
+
+
+
+async function animateWork(termId, pluginId) {
+  const steps = (typeof PLUGIN_ANIM !== 'undefined' && PLUGIN_ANIM[pluginId]) || ['processing…', 'done'];
+  const regions = ['BAYS','MIDT','IRON','SOUT','OAKR','SHAD'];
+  const randMac = () => [...Array(6)].map(() => ((Math.random()*256)|0).toString(16).padStart(2,'0')).join(':');
+  const randPhone = () => `PH-${regions[(Math.random()*regions.length)|0]}-${String((Math.random()*550)|0).padStart(4,'0')}`;
+
+  if (pluginId === 'net-analyzer') {
+    termAdd(termId, '┌─ NET ANALYZER · deep sweep', 'blue');
+    termAdd(termId, '│ channel hop · RSSI map · registry build', 'muted');
+    const phases = [
+      'ARP / neighbor table',
+      'DHCP lease scrape',
+      'handset fingerprint',
+      'PHONE_ID index',
+      'dedupe + sort',
+      'report buffer'
+    ];
+    for (let p = 0; p < phases.length; p++) {
+      termAdd(termId, `│ ▸ phase ${p+1}/${phases.length}: ${phases[p]}`, 'blue');
+      const burst = 5 + ((Math.random()*4)|0);
+      for (let k = 0; k < burst; k++) {
+        const line = [
+          `  ${randPhone()}  rssi=-${40+((Math.random()*45)|0)}  ${randMac()}`,
+          `  pkt in=${((Math.random()*5000)|0)} out=${((Math.random()*2000)|0)}  ttl=${30+((Math.random()*90)|0)}`,
+          `  model=${['N-Phone 7','Pulse X','GridHand','OakLite'][((Math.random()*4)|0)]}  os=vOS`,
+          `  hash=${((Math.random()*0xfffffff)|0).toString(16)}  slot=${((Math.random()*550)|0)}`
+        ][(Math.random()*4)|0];
+        termAdd(termId, `│ ${line}`, 'muted');
+        await sleep(40 + Math.random() * 35);
+      }
+      const pct = Math.round(((p + 1) / phases.length) * 100);
+      const bar = '█'.repeat(Math.round(pct/5)) + '░'.repeat(20 - Math.round(pct/5));
+      termAdd(termId, `│ [${bar}] ${pct}%`, 'green');
+      await sleep(90);
+    }
+    termAdd(termId, '└─ registry ready · use: save <name>', 'green');
+    return;
+  }
+
+  termAdd(termId, `┌─ WORK · ${pluginId}`, 'blue');
+  for (let i = 0; i < steps.length; i++) {
+    const pct = Math.round(((i + 1) / steps.length) * 100);
+    const bar = '█'.repeat(Math.round(pct / 5)) + '░'.repeat(20 - Math.round(pct / 5));
+    termAdd(termId, `│ ${steps[i]}`, '');
+    if (pluginId === 'net-link') {
+      termAdd(termId, `│   » iface wlan0  ch=${1+((Math.random()*11)|0)}  bssid=${randMac()}`, 'muted');
+      termAdd(termId, `│   » auth SAE  rtt=${((Math.random()*40)+2)|0}ms`, 'muted');
+    } else if (pluginId === 'phone-access') {
+      termAdd(termId, `│   » token ${[...Array(8)].map(()=>((Math.random()*16)|0).toString(16)).join('')}…`, 'muted');
+      termAdd(termId, `│   » fs mount /user  blocks=${((Math.random()*900)+100)|0}`, 'muted');
+    } else {
+      termAdd(termId, `│   » 0x${((Math.random()*0xffffff)|0).toString(16).padStart(6,'0')}  n=${((Math.random()*9999)|0)}`, 'muted');
+    }
+    termAdd(termId, `│ [${bar}] ${pct}%`, 'blue');
+    await sleep(200 + Math.random() * 100);
+  }
+  termAdd(termId, `└─ complete`, 'green');
+}
+
+
+
+
+async function enterPlugin(termId, pluginId) {
+  if (isPluginLocked(pluginId) || pluginId === 'phone-control') {
+    termAdd(termId, `Плагин «${pluginId}» недоступен (на доработке / заменён).`, 'error');
+    if (pluginId === 'phone-control') termAdd(termId, 'Управление телефоном — приложение Phone Lab на рабочем столе.', 'muted');
+    else termAdd(termId, 'Запуск из консоли закрыт, пока модуль на доработке.', 'muted');
+    return;
+  }
+
+  const term = getTerm(termId);
+  if (!term) return;
+  const p = getPlugin(pluginId) || PLUGINS.find(x => x.id === pluginId || x.name.toLowerCase() === pluginId.toLowerCase());
+  if (!p) { termAdd(termId, 'Плагин не найден.', 'error'); return; }
+  if (!getInstalledPlugin(state.game, p.id)) { termAdd(termId, `«${p.name}» не установлен.`, 'error'); return; }
+  if (!PLUGIN_SHELLS[p.id]) { termAdd(termId, 'Нет shell.', 'error'); return; }
+  if (term.busy) { termAdd(termId, 'busy…', 'error'); return; }
+  term.busy = true;
+  try {
+    term.plugin = p.id;
+    await enterPluginWorkspace(termId, p.id);
+  } finally {
+    term.busy = false;
+    const input = document.querySelector(`[data-window="${termId}"] .term-inline-input, [data-window="${termId}"] .terminal-form input`);
+    if (input) { input.disabled = false; input.focus({ preventScroll: true }); }
+  }
+}
+
+function renderTerminal(g, termId) {
+  const term = getTerm(termId);
+  const prompt = terminalPrompt(term);
+  const lines = (term.lines || []).map(l =>
+    `<div class="term-line ${esc(l.type || '')}">${esc(l.text)}</div>`
+  ).join('');
+  return `<div class="term-root" data-term="${esc(termId)}">
+  <div class="terminal-shell terminal-grid">
+    <div class="terminal-output" data-term-out="${esc(termId)}">${lines}</div>
+    <form class="term-inline-form terminal-form" data-term="${esc(termId)}">
+      <span class="term-inline-prompt">${esc(prompt)}</span>
+      <input class="term-inline-input" name="command" type="text" autocomplete="off" spellcheck="false" autocapitalize="off" enterkeyhint="send" aria-label="cmd">
+    </form>
+  </div>
+</div>`;
+}
+
+function renderMail(g) {
+  const msgs = (g.mail?.messages || []).slice(0, 80);
+  const view = state.mailView;
+  const compose = state.mailCompose;
+  const files = (g.computer?.files || []);
+
+  if (compose) {
+    const fileOpts = files.map(f =>
+      `<option value="${esc(f.id)}" ${compose.attachmentId===f.id?'selected':''}>${esc(f.name)} (${esc(f.type||'file')})</option>`
+    ).join('');
+    return `<div class="mail-app">
+      <div class="mail-toolbar">
+        <button type="button" class="btn tiny ghost" data-action="mail-compose-cancel">← Назад</button>
+        <strong class="mail-toolbar-title">Новое письмо</strong>
+      </div>
+      <div class="mail-compose panel">
+        <label class="field"><span>Кому (Имя Фамилия)</span>
+          <input id="mailTo" value="${esc(compose.to||'')}" placeholder="Ivan Petrov" autocomplete="off">
+        </label>
+        <label class="field"><span>Тема</span>
+          <input id="mailSubject" value="${esc(compose.subject||'')}" placeholder="Тема">
+        </label>
+        <label class="field"><span>Текст</span>
+          <textarea id="mailBody" rows="6" placeholder="Сообщение…">${esc(compose.body||'')}</textarea>
+        </label>
+        <label class="field"><span>Вложение</span>
+          <select id="mailAttach" class="field">
+            <option value="">— без файла —</option>
+            ${fileOpts}
+          </select>
+        </label>
+        <div class="mail-actions">
+          <button type="button" class="btn primary" data-action="mail-send">Отправить</button>
+          <button type="button" class="btn ghost" data-action="mail-compose-cancel">Отмена</button>
+        </div>
+      </div>
+    </div>`;
+  }
+
+  if (view) {
+    const mmsg = msgs.find(x => x.id === view);
+    if (!mmsg) { state.mailView = null; }
+    else {
+      const atts = (mmsg.attachments||[]).map(aid => {
+        const f = files.find(x => x.id === aid);
+        return f
+          ? `<div class="mail-attach-chip">${esc(f.name)}</div>`
+          : `<div class="mail-attach-chip muted">${esc(aid)}</div>`;
+      }).join('') || '<span class="muted small">нет вложений</span>';
+      return `<div class="mail-app">
+        <div class="mail-toolbar">
+          <button type="button" class="btn tiny ghost" data-action="mail-close-view">← Входящие</button>
+        </div>
+        <div class="mail-read panel">
+          <div class="kv"><span>От</span><b>${esc(mmsg.from)}</b></div>
+          <div class="kv"><span>Кому</span><b>${esc(mmsg.to)}</b></div>
+          <div class="kv"><span>Тема</span><b>${esc(mmsg.subject)}</b></div>
+          <div class="mail-body">${esc(mmsg.body||'')}</div>
+          <div class="section-gap"><strong>Вложения</strong><div class="mail-attach-list">${atts}</div></div>
+          <div class="mail-actions">
+            <button type="button" class="btn" data-action="mail-reply" data-id="${esc(mmsg.id)}">Ответить</button>
+            <button type="button" class="btn danger" data-action="mail-delete" data-id="${esc(mmsg.id)}">Удалить</button>
+          </div>
+        </div>
+      </div>`;
+    }
+  }
+
+  const list = msgs.map(m => `<button type="button" class="mail-item ${m.status==='unread'?'unread':''}" data-action="mail-open" data-id="${esc(m.id)}">
+      <div class="mail-item-main">
+        <strong>${esc(m.subject||'(без темы)')}</strong>
+        <small>${esc(m.from)} · ${new Date(m.at||0).toLocaleString('ru-RU')}</small>
+      </div>
+      <span class="badge ${m.direction==='in'?'blue':'gray'}">${m.direction==='in'?'IN':'OUT'}</span>
+    </button>`).join('') || '<div class="empty-state"><b>Пусто</b><p>Писем нет</p></div>';
+
+  return `<div class="mail-app">
+    <div class="mail-toolbar">
+      <div><div class="eyebrow">N-MAIL</div><strong>Почта</strong></div>
+      <button type="button" class="btn primary tiny" data-action="mail-compose">Написать</button>
+    </div>
+    <div class="mail-list">${list}</div>
+  </div>`;
+}
+
+function renderBank(g) {
+  const status = bankStatus(g);
+  const risk = bankRisk(g);
+  const tx = (g.economy.transactions || []).slice(0, 30);
+  const missing = (risk.missing || []).map(id => getPlugin(id)?.name || id);
+  return `<div class="app-heading"><div><div class="eyebrow">ASTER UNION</div><h2>Кошелёк оператора</h2><p>Личные CR. Вход в чужие счета — на сайте asterbank.null</p></div><span class="badge">WALLET</span></div>
+  <div class="bank-balance"><span>AVAILABLE CREDITS</span><strong>${fmt(g.economy.credits)} CR</strong>
+  <small>wallet ${esc(g.player.walletId||'—')}</small></div>
+  <div class="panel section-gap">
+    <div class="kv"><span>Номер кошелька</span><b>${esc(g.player.walletId||'—')}</b></div>
+    <button type="button" class="btn tiny" data-action="copy-text" data-text="${esc(g.player.walletId||'')}">КОПИРОВАТЬ</button>
+    <p class="muted small section-gap">Чтобы войти в счёт NPC: Browser → asterbank.null → Вход (логин/пароль из SMS).</p>
+  </div>
+  ${status.locked?`<div class="notice danger section-gap"><b>БЛОКИРОВКА</b> ${humanLeft(status.remaining)}</div>`:''}
+  <div class="panel section-gap"><div class="panel-title"><span>ЭНДГЕЙМ</span></div>
+    <div class="kv"><span>Trace risk</span><b class="text-red">${Math.round(risk.traceChance*100)}%</b></div>
+    ${missing.length?`<div class="notice warning">${missing.map(esc).join(', ')}</div>`:''}
+    <button type="button" class="btn danger" data-action="bank-attempt" ${status.locked?'disabled':''}>РИСКОВАЯ ОПЕРАЦИЯ</button>
+  </div>
+  <div class="panel section-gap"><div class="panel-title"><span>ИСТОРИЯ</span></div>
+    ${tx.map(t=>`<div class="list-row"><div class="list-main"><strong>${esc(t.note||t.reason||t.type||'tx')}</strong><small>${new Date(t.at||0).toLocaleString('ru-RU')}</small></div><span>${fmt(t.amount)} CR</span></div>`).join('')||'<div class="muted">пусто</div>'}
+  </div>`;
+}
+
+function renderFbi() {
+  return `<div class="app-heading"><div><div class="eyebrow">FEDERAL BUREAU OF INVESTIGATION</div><h2>FBI</h2><p>Закрытый операционный канал</p></div><span class="badge">LOCKED</span></div>
+  <div class="panel" style="text-align:center;padding:28px 16px">
+    <div style="font-size:28px;letter-spacing:.2em;opacity:.5;margin-bottom:12px">FBI</div>
+    <h3 style="margin:0 0 8px">Раздел недоступен</h3>
+    <p class="muted">Контракты федерального бюро появятся в будущем обновлении. Сейчас вкладка только резервирует место в системе.</p>
+    <div class="notice section-gap">Нет активных заданий · нет выплат · нет рейтинга</div>
+  </div>`;
+}
+
+
+function renderPhoneLab(g) {
+  const pw = g.phoneWorld || {};
+  const net = pw.network;
+  // offline => drop phone session
+  if (!net) {
+    if (state._phoneTarget || pw.activeSession || (pw.access && Object.keys(pw.access).length)) {
+      state._phoneTarget = null;
+      state.phoneUnlocked = null;
+      state.pinInput = '';
+      state.pinError = '';
+      if (g.phoneWorld) {
+        g.phoneWorld.activeSession = null;
+        g.phoneWorld.sessionFrozenSms = null;
+        g.phoneWorld.access = {};
+      }
+    }
+    return `<div class="nb-phone-shell idle">
+      <div class="nb-phone-top">NULLBYTE</div>
+      <div class="nb-phone-idle"><div class="nb-lock-hex"><span class="nb-lock-icon">📡</span></div><p>OFFLINE</p><small>net-link → connect &lt;region&gt;</small></div>
+      <div class="nb-phone-footer">NET: OFFLINE</div>
+    </div>`;
+  }
+  let activeId = state._phoneTarget || pw.activeSession?.phoneId || null;
+  if (!activeId && pw.access) {
+    const keys = Object.keys(pw.access);
+    activeId = keys.find(k => pw.access[k]?.unlocked) || keys.find(k => pw.access[k]?.pin || pw.access[k]?.attackOk) || null;
+  }
+  const phone = activeId ? findPhone(activeId) : null;
+  if (!phone) {
+    return `<div class="nb-phone-shell idle">
+      <div class="nb-phone-top">NULLBYTE</div>
+      <div class="nb-phone-idle"><div class="nb-lock-hex"><span class="nb-lock-icon">📱</span></div><p>Устройство не подключено</p><small>phone-access → open &lt;PHONE_ID&gt; → attack</small></div>
+      <div class="nb-phone-footer">NET: ${esc(net.regionId||'—')}</div>
+    </div>`;
+  }
+  let acc = pw.access?.[phone.id] || {};
+  if (!acc.unlocked && !acc.pin && !acc.attackOk) {
+    const k = Object.keys(pw.access || {}).find(x => x.toUpperCase() === phone.id.toUpperCase());
+    if (k) acc = pw.access[k] || acc;
+  }
+  if (acc.blocked) {
+    return `<div class="nb-phone-shell idle"><div class="nb-phone-top">BLOCKED</div>
+      <div class="nb-phone-idle"><div class="nb-lock-hex">⛔</div><p>${esc(phone.id)}</p></div></div>`;
+  }
+  const isUnlocked = !!(acc.unlocked || state.phoneUnlocked === phone.id);
+  if (!isUnlocked) {
+    const pinUi = state.pinInput || '';
+    const dots = [0,1,2,3].map(i => `<span class="nb-pin-dot ${i < pinUi.length ? 'on' : ''}"></span>`).join('');
+    const keysHtml = ['1','2','3','4','5','6','7','8','9','del','0','ok'].map(k => {
+      if (k === 'del') return `<button type="button" class="nb-pin-key" data-action="phone-pin-del">⌫</button>`;
+      if (k === 'ok') return `<button type="button" class="nb-pin-key nb-pin-blank" disabled></button>`;
+      return `<button type="button" class="nb-pin-key" data-action="phone-pin-digit" data-digit="${k}">${k}</button>`;
+    }).join('');
+    const clock = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+    return `<div class="nb-phone-shell lock">
+      <div class="nb-phone-status-row"><span>▣▣▣ SYS</span><span>🔋</span></div>
+      <div class="nb-lock-time">${clock}</div>
+      <div class="nb-lock-date">${esc(phone.ownerName)} · ${esc(phone.model)}</div>
+      <div class="nb-lock-hex"><span class="nb-lock-icon">🔒</span></div>
+      <div class="nb-lock-label">// SYSTEM SECURE //</div>
+      <div class="nb-pin-dots">${dots}</div>
+      <div class="nb-pin-pad">${keysHtml}</div>
+      ${state.pinError ? `<div class="nb-pin-err">${esc(state.pinError)}</div>` : ''}
+      <div class="nb-lock-hint">PIN после attack · 4 цифры</div>
+    </div>`;
+  }
+  const now = Date.now();
+  let msgs = [], gal = [], calls = [], contacts = [];
+  try { msgs = (pw.sessionFrozenSms && pw.sessionFrozenSms.length) ? pw.sessionFrozenSms : phoneMessages(phone, now); } catch (e) {}
+  try { registerBankFromMessages(g, phone, msgs); } catch (e) {}
+  try { gal = phoneGallery(phone) || []; } catch (e) {}
+  try { calls = phoneCallLog(phone, now) || []; } catch (e) {}
+  try { contacts = phoneContacts(phone, now) || []; } catch (e) {}
+  const tab = state.phoneLabTab || 'home';
+  let files = [];
+  try { files = phoneFiles(phone, now) || []; } catch (e) { files = []; }
+  const tabs = `<div class="nb-tabs">
+      <button type="button" class="nb-tab ${tab==='msgs'||tab==='home'?'on':''}" data-action="phone-lab-tab" data-tab="msgs">MESSAGES</button>
+      <button type="button" class="nb-tab ${tab==='calls'?'on':''}" data-action="phone-lab-tab" data-tab="calls">CALLS</button>
+      <button type="button" class="nb-tab ${tab==='gallery'?'on':''}" data-action="phone-lab-tab" data-tab="gallery">GALLERY</button>
+      <button type="button" class="nb-tab ${tab==='files'?'on':''}" data-action="phone-lab-tab" data-tab="files">FILES</button>
+    </div>`;
+  let body = '';
+  if (tab === 'msgs') {
+    body = `<div class="nb-list">${msgs.map(m => `<div class="nb-card"><div class="nb-card-top"><span class="nb-cyan">${esc(m.from||'SMS')}</span></div><div class="nb-card-body">${esc(m.text||'')}</div></div>`).join('')||'<div class="nb-empty">нет SMS</div>'}</div>
+      <button type="button" class="nb-action" data-action="phone-lab-export" data-kind="msgs" data-id="${esc(phone.id)}">SAVE SMS</button>`;
+  } else if (tab === 'calls') {
+    body = `<div class="nb-list">${calls.map(c => `<div class="nb-card"><div class="nb-card-top"><span class="nb-pink">${esc(c.info||'')}</span><span class="nb-muted">${esc(c.date||'')} ${esc(c.time||'')}</span></div><div class="nb-card-body">${esc(c.with||'')} · ${esc(c.number||'')}</div></div>`).join('')||'<div class="nb-empty">пусто</div>'}</div>`;
+  } else if (tab === 'contacts') {
+    body = `<div class="nb-list">${contacts.map(c => `<div class="nb-card"><div class="nb-card-top"><span class="nb-pink">${esc(c.name||'')}</span></div><div class="nb-card-body nb-cyan">${esc(c.number||'')}</div></div>`).join('')||'<div class="nb-empty">пусто</div>'}</div>
+      <button type="button" class="nb-action" data-action="phone-lab-export" data-kind="contacts" data-id="${esc(phone.id)}">SAVE CONTACTS</button>`;
+  } else if (tab === 'gallery') {
+    body = `<div class="nb-gal">${gal.map(x=>`<div class="nb-thumb"><span>${esc(x.title||'')}</span></div>`).join('')}</div>
+      <button type="button" class="nb-action" data-action="phone-lab-export" data-kind="gallery" data-id="${esc(phone.id)}">SAVE GALLERY</button>`;
+  } else if (tab === 'files') {
+    body = `<div class="nb-list">${files.map(f => `<div class="nb-card">
+        <div class="nb-card-top"><span class="nb-cyan">${esc(f.name)}</span><span class="nb-muted">${esc(f.kind)} · ${f.size}b</span></div>
+        <div class="nb-card-body">${esc((f.body||'').slice(0,120))}${(f.body||'').length>120?'…':''}</div>
+        <button type="button" class="nb-action tiny" data-action="phone-file-download" data-phone="${esc(phone.id)}" data-file="${esc(f.id)}">СКАЧАТЬ</button>
+      </div>`).join('')||'<div class="nb-empty">нет файлов</div>'}</div>`;
+  } else {
+    body = `<div class="nb-app-grid">
+      <button type="button" class="nb-app" data-action="phone-lab-tab" data-tab="msgs"><span class="nb-app-ico nb-cyan">💬</span><label>MESSAGES</label></button>
+      <button type="button" class="nb-app" data-action="phone-lab-tab" data-tab="calls"><span class="nb-app-ico nb-pink">📞</span><label>CALLS</label></button>
+      <button type="button" class="nb-app" data-action="phone-lab-tab" data-tab="gallery"><span class="nb-app-ico nb-cyan">🖼</span><label>GALLERY</label></button>
+      <button type="button" class="nb-app" data-action="phone-lab-tab" data-tab="files"><span class="nb-app-ico nb-pink">📁</span><label>FILES</label></button>
+      <button type="button" class="nb-app" data-action="phone-lab-tab" data-tab="contacts"><span class="nb-app-ico nb-pink">👥</span><label>CONTACTS</label></button>
+    </div>`;
+  }
+  return `<div class="nb-phone-shell unlocked">
+    <div class="nb-phone-status-row"><span>${new Date().toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'})}</span><span>▣ NULLBYTE</span><span>🔋</span></div>
+    <div class="nb-phone-brand">NULLBYTE</div>
+    <div class="nb-phone-meta">${esc(phone.ownerName)} · ${esc(phone.role||'')} · ${esc(phone.number)}</div>
+    ${tabs}
+    <div class="nb-phone-body">${body}</div>
+    <div class="nb-phone-dock"><span>SYS: SECURE</span><span>NET: ${esc(net.regionId)}</span></div>
+  </div>`;
+}
+
+function renderIntel(g) {
+  const intel = g.intel || {};
+  const doms = Object.values(intel.domains||{}).slice(0,12);
+  const ev = (g.events?.active||[]);
+  const ph = Object.keys(g.phoneWorld?.discovered||{});
+  return `<div class="app-heading"><div><div class="eyebrow">INTEL FEED</div><h2>Intel</h2><p>Разведка, discovered PHONE_ID, события мира</p></div><span class="badge">LIVE</span></div>
+  <div class="grid-3">
+    <div class="stat-box"><span>DOMAINS</span><strong>${doms.length}</strong></div>
+    <div class="stat-box"><span>PHONES</span><strong>${ph.length}</strong></div>
+    <div class="stat-box"><span>EVENTS</span><strong>${ev.length}</strong></div>
+  </div>
+  <div class="panel section-gap"><div class="panel-title"><span>СОБЫТИЯ</span></div>
+    ${ev.length?ev.map(e=>`<div class="list-row"><div class="list-main"><strong>${esc(e.title)}</strong><small>${esc(e.body)}</small></div></div>`).join(''):'<div class="muted">Нет активных</div>'}
+  </div>
+  <div class="panel section-gap"><div class="panel-title"><span>PHONE_ID</span></div>
+    <div class="muted small" style="word-break:break-all">${ph.slice(0,40).map(esc).join(', ')||'—'}</div>
+  </div>
+  <div class="panel section-gap"><div class="panel-title"><span>DOMAINS</span></div>
+    ${doms.map(d=>`<div class="list-row"><div class="list-main"><strong>${esc(d.domain||d.id)}</strong><small>${esc(d.kind||'')}</small></div></div>`).join('')||'<div class="muted">Пусто</div>'}
+  </div>`;
+}
+
+function renderHelp() {
+  const g = state.game;
+  const sections = [
+    ['Обзор NULLBYTE', 'Одиночная симуляция хакерской жизни в вымышленном городе Нулл-Сити. Все сети, телефоны, серверы, почта и банки — игровые. Нет доступа к реальным устройствам, SMS, сайтам или API.'],
+    ['Что исследовать', '1) Региональные сети и телефоны (PHONE_ID). 2) Виртуальные сайты .null (сейчас web-цепочка на доработке). 3) Серверы и Intel. 4) Контракты BlackWire. 5) Случайные события мира.'],
+    ['Регионы и сеть', 'NullAtlas: 6 регионов (Бейшор-Хайтс, Мидтаун-Спайн, Айронрич, Саутгейт, Окридж, Шэдоулайн). Terminal: run net-link → list → connect <region_id>. Подключение только внутриигровое.'],
+    ['Анализ сети', 'run net-analyzer → scan (~анализ) → save <имя>. Полный отчёт содержит все ~550 PHONE_ID региона. Не обрезается. Ищи нужный ID сам (поиск в Files / IDE).'],
+    ['Телефоны PHONE_ID', 'Идентификатор формата PH-XXXX-0000. open через phone-access. После open открывается Phone Lab. SMS/звонки/галерея/lock/export — в приложении. disconnect только командой: phone-access → disconnect (или net-link → disconnect). Прогресс (файлы, discovered) сохраняется, сессия — нет.'],
+    ['Альтернатива: Mail Drop', 'run mail-drop → craft → save файл → N-Mail вложение NPC. Движок считает шанс/задержку открытия. При успехе в почте приходит PHONE_ID.'],
+    ['Плагины mobile', 'Бесплатно: net-link, net-analyzer, phone-access, mail-drop. Управление телефоном — Phone Lab. Платно: sms-bomber 40000 CR, bank-peek 100000 CR. Старые mobile-модули удалены.'],
+    ['Сайты (WIP)', 'Web-плагины в NULForge помечены «В доработке». Логика сохранена, run закрыт до отдельного чек-листа.'],
+    ['Terminal', 'help | plugins | run <id> | files | ls | cat | mission list | intel | map. В плагине: help, exit. Неизвестная команда — сразу ошибка без фейковой загрузки.'],
+    ['Files и IDE', 'Files — список и просмотр. IDE — вкладки, правка, поиск, сохранение виртуальных файлов. Нет доступа к файловой системе устройства.'],
+    ['N-Mail / BlackWire', 'Почта для писем и сдачи. Контракты по сайтам временно скрыты; phone-ветка расширяется.'],
+    ['События', 'Движок сам создаёт редкие события (инфра / социал / security / rare). Они меняют доступность и иногда кладут артефакт в Files. Пропуск не ломает основной прогресс.'],
+    ['Уровни и экономика', 'Уровень растёт только от XP, потолка практически нет. Гейт плагинов по уровню снят. CR — только игровые.'],
+    ['Сохранение', 'Telegram CloudStorage (чанки) + local fallback. Ник вводится один раз. migrateSave не затирает ops/phoneWorld/events.'],
+    ['Частые ошибки', '«Плагин на доработке» — web/legacy. «Сначала connect» — нет сети. «PHONE_ID не найден» — проверь формат из отчёта. Файлы смотри в Files, не жди автоподсветки ID.']
+  ];
+  const plugs = (typeof PLUGINS !== 'undefined' ? PLUGINS : []).map(p => {
+    const lock = typeof isPluginLocked === 'function' && isPluginLocked(p.id);
+    return `<div class="list-row"><div class="list-main"><strong>${esc(p.name)}</strong><small>${esc(p.category)} · ${lock ? 'WIP' : 'OK'} · ${esc(p.description)}</small></div>
+      <button class="btn tiny ghost" data-action="plugin-docs" data-id="${p.id}">ПОДРОБНЕЕ</button></div>`;
+  }).join('');
+  const ev = (g?.events?.active || []).map(e => `<div class="list-row"><div class="list-main"><strong>${esc(e.title)}</strong><small>${esc(e.body)}</small></div></div>`).join('') || '<div class="muted small">Активных событий нет</div>';
+  return `<div class="app-heading"><div><div class="eyebrow">NULLBYTE KNOWLEDGE BASE</div><h2>Help / Docs</h2><p>Полное руководство: что исследовать, как брать ID, какие инструменты.</p></div><span class="badge green">RU</span></div>
+  <div class="notice warning">Все термины «взлом», «сеть», «SMS» — только симуляция.</div>
+  ${sections.map((s,i)=>`<div class="panel section-gap"><div class="panel-title"><span>${String(i+1).padStart(2,'0')} / ${esc(s[0].toUpperCase())}</span></div><div class="muted small" style="line-height:1.75">${esc(s[1])}</div></div>`).join('')}
+  <div class="panel section-gap"><div class="panel-title"><span>ПЛАГИНЫ</span></div><div class="list">${plugs}</div></div>
+  <div class="panel section-gap"><div class="panel-title"><span>СОБЫТИЯ СЕЙЧАС</span></div>${ev}</div>`;
+}
+
+function highlightNbs(source) {
+  const allowed=new Set(['MISSION','TARGET','ANALYZE','DECODE','DISCOVER','VERIFY','READ','SIMULATE','EXPORT','DELIVER']);
+  return String(source||'').split('\n').map(line=>{
+    if(/^\s*#/.test(line))return `<span class="ide-comment">${esc(line)||' '}</span>`;
+    const match=line.match(/^(\s*)([A-Za-z]+)(.*)$/);
+    if(!match)return esc(line)||' ';
+    const command=match[2].toUpperCase(),kind=allowed.has(command)?'ide-keyword':'ide-invalid';
+    const rest=esc(match[3]).replace(/&quot;.*?&quot;/g,part=>`<span class="ide-string">${part}</span>`);
+    return `${esc(match[1])}<span class="${kind}">${esc(match[2])}</span>${rest}`;
+  }).join('\n')+'\n';
+}
+function syncNbsHighlight(editor) {
+  const pre=editor?.parentElement?.querySelector('#nbsHighlight');
+  if(pre){pre.innerHTML=highlightNbs(editor.value);pre.scrollTop=editor.scrollTop;pre.scrollLeft=editor.scrollLeft;}
+}
+
+function nbsTemplate() {
+  const mission=state.game.missions.items.find(m=>m.status==='accepted');if(!mission)return '# Нет активного контракта.\n# Прими контракт в BlackWire, чтобы получить шаблон.';
+  return `# NULLBYTE Script — безопасная игровая декларация\nMISSION "${mission.id}"\nTARGET "${mission.target}"\nANALYZE target\nDECODE artifact "sealed-record"\nDISCOVER node\nVERIFY requirement "weakness-found"\nSIMULATE access\n${mission.target==='civic-records'?'READ virtual-records\n':''}EXPORT dataset "${mission.id}-result"\nDELIVER mail "${mission.id}"`;
+}
+function renderIde(g) {
+  if (!state.ide) state.ide = { tabs: [], active: 0, find: '', replace: '', dirty: {} };
+  const files = [...(g.computer.files||[]), ...(g.editor.files||[])];
+  if (!state.ide.tabs.length && files[0]) {
+    state.ide.tabs = [{ id: files[0].id, name: files[0].name }];
+    state.ide.active = 0;
+  }
+  const tab = state.ide.tabs[state.ide.active];
+  const file = tab ? files.find(f => f.id === tab.id || f.name === tab.name) : null;
+  const content = file ? String(file.content || '') : '';
+  const lines = content.split('\n');
+  const lineNos = lines.map((_, i) => i + 1).join('\n');
+  const tabsHtml = state.ide.tabs.map((t, idx) =>
+    `<button type="button" class="ide-tab ${idx===state.ide.active?'on':''}" data-action="ide-tab" data-idx="${idx}">${esc(t.name)}</button>`
+  ).join('') || '<span class="muted small">Нет вкладок</span>';
+  const list = files.slice(0, 50).map(f => `<button type="button" class="list-row" data-action="ide-open" data-id="${esc(f.id)}"><div class="list-main"><strong>${esc(f.name)}</strong><small>${esc(f.type||'file')} · ${String(f.content||'').length} ch</small></div></button>`).join('') || '<div class="muted">Файлов нет</div>';
+  return `<div class="app-heading"><div><div class="eyebrow">VIRTUAL IDE · READ ONLY</div><h2>NBS IDE / Viewer</h2><p>Просмотр · копирование · удаление. Редактирование временно отключено.</p></div><span class="badge">RO</span></div>
+  <div class="ide-layout section-gap">
+    <div class="panel ide-sidebar" style="max-height:min(520px,60vh);overflow:auto;padding:8px">${list}</div>
+    <div class="ide-main">
+      <div class="ide-tabs btn-row" style="flex-wrap:wrap;gap:4px">${tabsHtml}</div>
+      <div class="ide-toolbar btn-row section-gap">
+        <button type="button" class="btn tiny ghost" data-action="ide-copy">Копировать всё</button>
+        <button type="button" class="btn tiny ghost" data-action="ide-find">Найти</button>
+        <button type="button" class="btn tiny danger" data-action="ide-delete" ${file?'':'disabled'}>Удалить файл</button>
+      </div>
+      <div class="ide-find row section-gap" style="display:flex;gap:6px;flex-wrap:wrap">
+        <input class="field" id="ideFind" placeholder="Найти в файле" value="${esc(state.ide.find||'')}" style="flex:1;min-width:120px">
+      </div>
+      <div class="ide-editor-wrap" style="display:flex;border:1px solid #2a3a48;border-radius:8px;overflow:hidden;min-height:280px;background:#0a1016">
+        <pre class="ide-gutter muted" style="margin:0;padding:10px 8px;text-align:right;user-select:none;font-size:11px;line-height:1.45;border-right:1px solid #1e2a33;min-width:36px">${lineNos || '1'}</pre>
+        <pre id="ideBody" class="ide-body" style="flex:1;margin:0;padding:10px;font-size:11px;line-height:1.45;overflow:auto;max-height:min(420px,55vh);user-select:text;white-space:pre-wrap;color:#d5e0ea">${esc(content)||'(пусто)'}</pre>
+      </div>
+      <div class="muted small section-gap">Символов: ${content.length} · ${file ? esc(file.name) : '—'} · только чтение</div>
+    </div>
+  </div>`;
+}
+
+
+function actionResult(result) {
+  if(!result)return;
+  if(result.ok){toast(result.message||'Готово.',result.success===false?'error':'success');scheduleSave();refreshOpenApps();}
+  else toast(result.reason||'Операция невозможна.', 'error');
+}
+function doInstall(id) {
+  const p=getPlugin(id);if(!p)return;
+  confirm(`Установить ${p.name}?`,`${esc(p.description)}<br><br>Цена: <b>${fmt(p.price)} CR</b> · RAM: <b>${p.ram} GB</b> · место: <b>${p.storage} MB</b> · ОС: <b>${p.minOs||1}.0+</b>.`,()=>actionResult(purchasePlugin(state.game,id)));}
+function doHardware(part) {
+  const next=HARDWARE[part]?.find(x=>x.level===state.game.computer[part]+1);if(!next)return;
+  confirm('Подтвердить обновление?',`Текущий: <b>${esc(HARDWARE[part].find(x=>x.level===state.game.computer[part]).name)}</b> (${esc(hardwareDetail(part,HARDWARE[part].find(x=>x.level===state.game.computer[part])))}).<br>Новый: <b>${esc(next.name)}</b> (${esc(hardwareDetail(part,next))}).<br>Стоимость: <b>${fmt(next.price)} CR</b>. Компонент будет автоматически установлен в свой слот.`,()=>actionResult(buyHardware(state.game,part)));}
+function openMissionTarget(missionId) {
+  if(!state.game)return;
+  const m=state.game.missions.items.find(x=>x.id===missionId);
+  if(!m){toast('Контракт не найден.','error');return;}
+  const site=getSite(state.game,m.target);
+  if(!site){toast('Цель контракта не найдена.','error');return;}
+  ensureBrowserTab(m.target);
+  openApp('browser');
+  renderWindow('browser');
+  toast(`Цель: ${site.domain}`,'success');
+}
+function runSiteOperation(siteId,op) {
+  const mission=state.game.missions.items.find(m=>m.status==='accepted'&&m.target===siteId);
+  const result=operateSite(state.game,siteId,op,mission?.id||null);
+  if(!result.ok){toast(result.reason,'error');return;}
+  toast(result.message,result.success===false?'error':'success');
+  // After successful export stage on an active mission, auto-create result file so Mail can send it.
+  if(result.ok && result.success!==false && op==='export' && mission){
+    const exp=exportMissionResult(state.game,mission.id);
+    if(exp.ok) toast(exp.message + ' Открой N-Mail и нажми ОТПРАВИТЬ.','success');
+    else toast(exp.reason,'error');
+  }
+  scheduleSave();
+  refreshOpenApps();
+}
+function exportResult(missionId) {
+  const result=exportMissionResult(state.game,missionId);
+  actionResult(result);
+  if(result.ok){openApp('mail');renderWindow('mail');}
+}
+function deliverResult(missionId) {
+  const result=submitMission(state.game,missionId);
+  actionResult(result);
+  if(result.ok){renderWindow('mail');renderWindow('blackwire');}
+}
+function openMail(id) {const m=state.game.mail.messages.find(x=>x.id===id);if(!m)return;state.selectedMail=id;m.status='read';scheduleSave();renderWindow('mail');}
+function runNbsAction(action) {
+  const editor=$('nbsEditor');if(editor)state.editorText=editor.value;
+  const output=$('nbsOutput');
+  if(action==='template'){state.editorText=nbsTemplate();renderWindow('ide');return;}
+  if(action==='validate'){const result=validateNbs(state.editorText);state.nbsOutput=result.ok?`OK · ${result.commands.length} зарегистрированных команд.\n${result.commands.map(c=>c.op).join(' → ')}`:result.errors.join('\n');if(output)output.textContent=state.nbsOutput;return;}
+  if(action==='save'){const name=$('nbsFileName')?.value||state.editorName;const safeName=String(name).trim().replace(/[^A-Za-z0-9_-]/g,'').slice(0,24);const result=saveEditorFile(state.game,name,state.editorText);if(result.ok)state.editorName=safeName;toast(result.message||result.reason,result.ok?'success':'error');if(result.ok){scheduleSave();renderWindow('ide');}return;}
+  if(action==='run'){const result=runNbs(state.game,state.editorText);if(!result.ok){toast(result.reason,'error');state.nbsOutput=result.output?.join('\n')||result.reason;if(output)output.textContent=state.nbsOutput;return;}
+    if(result.missionId&&result.exportRequested){const m=state.game.missions.items.find(x=>x.id===result.missionId);if(m){const exp=exportMissionResult(state.game,m.id);if(!exp.ok)toast(exp.reason,'error');else result.output.push(exp.message);if(result.deliverRequested&&exp.ok){const sent=submitMission(state.game,m.id);if(sent.ok)result.output.push(sent.message);else result.output.push(sent.reason);}}}
+    state.nbsOutput=result.output.join('\n')+(result.deliverRequested?'':'\n\nДля отправки открой N-Mail.');if(output)output.textContent=state.nbsOutput;toast('NBS-сценарий выполнен в игровой симуляции.','success');scheduleSave();refreshOpenApps();return;
+  }
+}
+
+function handleAction(action,el) {
+  const id=el.dataset.id,app=el.dataset.app,site=el.dataset.site,part=el.dataset.part;
+  switch(action){
+    case 'bank-npc-login':{
+      const login = (document.getElementById('bankNpcLogin')?.value || '').trim();
+      const password = (document.getElementById('bankNpcPass')?.value || '').trim();
+      if (!login || !password) { toast('Введи логин и пароль', 'error'); break; }
+      const r = bankLogin(state.game, login, password);
+      if (!r.ok) { toast(r.reason || 'Ошибка входа', 'error'); break; }
+      if (!state.game.bank) state.game.bank = {};
+      state.game.bank.sessionId = r.sessionId || r.session?.id || r.id;
+      // normalize session id from various return shapes
+      if (r.session && r.session.id) state.game.bank.sessionId = r.session.id;
+      if (r.sessionId) state.game.bank.sessionId = r.sessionId;
+      toast('Вход выполнен', 'success');
+      scheduleSave();
+      renderWindow('bank');
+      break;
+    }
+    case 'bank-npc-transfer':{
+      const to = (document.getElementById('bankTransferTo')?.value || '').trim();
+      const amt = Number(document.getElementById('bankTransferAmt')?.value || 0);
+      const sid = state.game.bank?.sessionId;
+      if (!sid) { toast('Нет сессии', 'error'); break; }
+      if (!to) { toast('Укажи номер счёта', 'error'); break; }
+      const r = bankTransfer(state.game, sid, to, amt);
+      if (!r.ok) { toast(r.reason || 'Ошибка перевода', 'error'); break; }
+      // credit player wallet if transfer to self
+      if (r.creditedToPlayer || r.toPlayer || (state.game.player.walletId && to === state.game.player.walletId)) {
+        /* bankTransfer should handle */
+      }
+      toast(r.message || ('Переведено ' + amt + ' CR'), 'success');
+      scheduleSave();
+      renderWindow('bank');
+      break;
+    }
+    case 'bank-logout-skip':state.bankSessionId=null;toast('Сессия закрыта');refreshOpenApps();break;
+    case 'plugin-docs':{
+      const docs={...pluginDocs(),...extendedPluginDocs()}[id]||{...pluginDocs(),...extendedPluginDocs()}[el.dataset.plugin];
+      const p=docs||{title:id,role:'Нет описания',steps:[],inputs:'—',outputs:'—',next:[]};
+      const plug = getPlugin(id) || PLUGINS.find(x=>x.id===id);
+      showModal({title:p.title||'Плагин',eyebrow:'ПОДРОБНЕЕ О ПЛАГИНЕ',body:`
+        <p><b>ID:</b> <code>${esc(id)}</code> · <b>Версия:</b> ${esc(plug?.version||'—')} · <b>Категория:</b> ${esc(plug?.category||'—')}</p>
+        <p><b>Назначение:</b> ${esc(p.role)}</p>
+        <p><b>Что делает / не делает:</b> ${esc(plug?.description||p.role)} ${esc(p.limits||'')}</p>
+        <p><b>Цена:</b> ${plug?.price?fmt(plug.price)+' CR':'бесплатно'} · <b>RAM:</b> ${plug?.ram||'—'} · <b>Storage:</b> ${plug?.storage||'—'} MB</p>
+        <p><b>Вход:</b> ${esc(p.inputs)}</p>
+        <p><b>Выход:</b> ${esc(p.outputs)}</p>
+        <p><b>Шаги:</b></p><ol style="margin:6px 0 0 18px">${(p.steps||[]).map(s=>`<li>${esc(s)}</li>`).join('')}</ol>
+        <p><b>Далее:</b> ${(p.next||[]).map(esc).join(', ')||'—'}</p>
+        <p class="muted small"><b>Ограничения:</b> ${esc(p.limits||'—')}</p>
+        ${typeof isPluginLocked==='function'&&isPluginLocked(id)?'<p class="notice warning">Статус: НА ДОРАБОТКЕ — запуск и установка закрыты.</p>':''}`,confirm:'ЗАКРЫТЬ',cancel:'',onConfirm:()=>{}});
+      break;
+    }
+    case 'copy-text':{
+      const t=el.dataset.text||'';
+      if(navigator.clipboard?.writeText) navigator.clipboard.writeText(t).then(()=>toast('Скопировано','success')).catch(()=>toast(t,'info'));
+      else toast(t,'info');
+      break;
+    }
+    case 'ide-open':{
+      const f=[...(state.game.computer.files||[]),...(state.game.editor.files||[])].find(x=>x.id===id);
+      if(!f) break;
+      if(!state.ide) state.ide={tabs:[],active:0,find:'',replace:'',dirty:{}};
+      let idx=state.ide.tabs.findIndex(t=>t.id===f.id);
+      if(idx<0){ state.ide.tabs.push({id:f.id,name:f.name}); idx=state.ide.tabs.length-1; }
+      state.ide.active=idx; renderWindow('ide'); break;
+    }
+    case 'ide-tab':{
+      const idx=parseInt(el.dataset.idx,10);
+      // flush textarea to dirty buffer
+      const body=$('ideBody');
+      if(body && state.ide?.tabs[state.ide.active]){
+        const t=state.ide.tabs[state.ide.active];
+        const f=state.game.computer.files.find(x=>x.id===t.id);
+        if(f && body.value!==f.content){ state.ide.dirty[t.id]=true; state._ideBuf=state._ideBuf||{}; state._ideBuf[t.id]=body.value; }
+      }
+      if(!isNaN(idx)) state.ide.active=idx; renderWindow('ide'); break;
+    }
+    case 'ide-save':{ toast('Редактирование отключено — только просмотр','info'); break; }
+    case 'ide-save-disabled':{
+      const body=$('ideBody'); if(!body||!state.ide?.tabs?.length) break;
+      const t=state.ide.tabs[state.ide.active];
+      let f=state.game.computer.files.find(x=>x.id===t.id);
+      if(!f){ f={id:'file_ide_'+Date.now().toString(36),name:t.name||'note.txt',type:'text',path:'/ide/',createdAt:Date.now(),content:''}; state.game.computer.files.unshift(f); t.id=f.id; }
+      f.content=body.value; f.size=Math.max(1,Math.ceil(f.content.length/1024));
+      state.ide.dirty[t.id]=false; scheduleSave(); toast('Сохранено','success'); renderWindow('ide'); break;
+    }
+    case 'ide-copy':{
+      const body=$('ideBody');
+      const text=body?(body.value!==undefined?body.value:body.textContent):'';
+      if(text&&navigator.clipboard?.writeText) navigator.clipboard.writeText(text).then(()=>toast('Скопировано','success'));
+      break;
+    }
+    case 'ide-new':{ toast('Создание из IDE отключено. Файлы появляются из плагинов.','info'); break; }
+    case 'ide-new-disabled':{
+      if(!state.ide) state.ide={tabs:[],active:0,find:'',replace:'',dirty:{}};
+      const name=`note_${Date.now().toString(36)}.txt`;
+      const f={id:'file_ide_'+Date.now().toString(36),name,type:'text',content:'',path:'/ide/',createdAt:Date.now(),size:1};
+      state.game.computer.files.unshift(f);
+      state.ide.tabs.push({id:f.id,name}); state.ide.active=state.ide.tabs.length-1;
+      scheduleSave(); renderWindow('ide'); break;
+    }
+    case 'ide-delete':{
+      const t=state.ide?.tabs?.[state.ide.active]; if(!t) break;
+      state.game.computer.files=state.game.computer.files.filter(x=>x.id!==t.id);
+      state.ide.tabs.splice(state.ide.active,1); state.ide.active=Math.max(0,state.ide.active-1);
+      scheduleSave(); renderWindow('ide'); break;
+    }
+    case 'ide-replace-one':{ toast('Редактирование отключено','info'); break; }
+    case 'ide-replace-one-x':{
+      const body=$('ideBody'); const find=$('ideFind')?.value||''; const rep=$('ideReplace')?.value||'';
+      if(body&&find){ const i=body.value.indexOf(find); if(i>=0){ body.value=body.value.slice(0,i)+rep+body.value.slice(i+find.length); toast('Заменено','success'); } else toast('Не найдено','info'); }
+      break;
+    }
+    case 'ide-replace-all':{ toast('Редактирование отключено','info'); break; }
+    case 'ide-replace-all-x':{
+      const body=$('ideBody'); const find=$('ideFind')?.value||''; const rep=$('ideReplace')?.value||'';
+      if(body&&find){ const c=(body.value.split(find).length-1); body.value=body.value.split(find).join(rep); toast('Замен: '+c,'success'); }
+      break;
+    }
+    case 'ide-find':{
+      const body=$('ideBody'); const find=$('ideFind')?.value||'';
+      if(!body||!find) break;
+      const text = body.value !== undefined ? body.value : (body.textContent||'');
+      const idx = text.indexOf(find);
+      if(idx < 0){ alert('Не найдено: '+find); break; }
+      // highlight via selection in pre
+      try {
+        const range = document.createRange();
+        const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT);
+        let count = 0, node;
+        while (node = walker.nextNode()) {
+          const next = count + node.textContent.length;
+          if (idx >= count && idx < next) {
+            const local = idx - count;
+            range.setStart(node, local);
+            range.setEnd(node, Math.min(local + find.length, node.textContent.length));
+            const sel = window.getSelection();
+            sel.removeAllRanges();
+            sel.addRange(range);
+            body.scrollTop = Math.max(0, (body.scrollHeight * idx / Math.max(1,text.length)) - 40);
+            break;
+          }
+          count = next;
+        }
+      } catch (e) {}
+      break;
+    }
+    case 'nbs-run':{
+      const body=$('ideBody'); if(body) state.editorText=body.value;
+      const result=runNbs(state.game, state.editorText||'');
+      state.nbsOutput=(result.output||[]).join('\n')||result.reason||'';
+      toast(result.ok?'NBS OK':'NBS ошибка', result.ok?'success':'error');
+      renderWindow('ide'); scheduleSave(); break;
+    }
+    case 'phone-lab-open':{
+      state._phoneTarget = id;
+      if(!state.game.phoneWorld) state.game.phoneWorld={access:{},discovered:{}};
+      state.game.phoneWorld.access[id]={level:'user',at:Date.now()};
+      state.game.phoneWorld.discovered[id]=true;
+      renderWindow('phone'); break;
+    }
+    case 'phone-pin-digit':{
+      const d = String(el.dataset.digit || '');
+      if (!/^[0-9]$/.test(d)) break;
+      state.pinInput = String(state.pinInput || '') + d;
+      if (state.pinInput.length > 4) state.pinInput = state.pinInput.slice(0, 4);
+      state.pinError = '';
+      if (state.pinInput.length === 4) {
+        const pid = state._phoneTarget || state.game?.phoneWorld?.activeSession?.phoneId;
+        let r = { ok: false, reason: 'Нет сессии' };
+        try { r = unlockWithPin(state.game, pid, state.pinInput); } catch (err) { r = { ok: false, reason: String(err.message || err) }; }
+        if (r.ok) {
+          state.pinInput = '';
+          state.pinError = '';
+          state.phoneLabTab = 'home';
+          state.phoneUnlocked = r.phoneId || pid;
+          if (r.xpGain) toast('+' + r.xpGain + ' XP за взлом телефона' + (r.leveled ? ' · LEVEL UP!' : ''), 'success');
+          scheduleSave();
+          // force access unlocked
+          try {
+            const id = r.phoneId || pid;
+            if (state.game.phoneWorld?.access?.[id]) state.game.phoneWorld.access[id].unlocked = true;
+          } catch (e) {}
+          scheduleSave();
+        } else {
+          state.pinError = r.reason || 'Неверный PIN';
+          state.pinInput = '';
+          state.phoneUnlocked = null;
+        }
+      }
+      renderWindow('phone');
+      break;
+    }
+    case 'phone-pin-del':{
+      state.pinInput = String(state.pinInput || '').slice(0, -1);
+      state.pinError = '';
+      renderWindow('phone');
+      break;
+    }
+    case 'phone-lab-tab':{
+      state.phoneLabTab = el.dataset.tab || 'msgs';
+      renderWindow('phone'); break;
+    }
+    case 'phone-file-download': {
+      const phoneId = target.getAttribute('data-phone');
+      const fileId = target.getAttribute('data-file');
+      const phone = findPhone(phoneId);
+      const list = phone ? phoneFiles(phone) : [];
+      const file = list.find(f => f.id === fileId);
+      if (!file) { toast('Файл не найден', 'error'); break; }
+      if (!state.game.computer.files) state.game.computer.files = [];
+      const id = 'dl_' + file.id + '_' + Date.now().toString(36);
+      state.game.computer.files.unshift({
+        id,
+        name: file.name,
+        type: file.kind || 'file',
+        content: file.body || '',
+        body: file.body || '',
+        source: 'phone:' + phoneId,
+        at: Date.now()
+      });
+      state.game.computer.files = state.game.computer.files.slice(0, 80);
+      toast('Скачано: ' + file.name, 'success');
+      scheduleSave();
+      break;
+    }
+    case 'phone-lab-export':{
+      const kind = el.dataset.kind || 'msgs';
+      const pid = el.dataset.id || id || state._phoneTarget;
+      const phone = findPhone(pid);
+      if (!phone) { toast('Нет телефона', 'error'); break; }
+      let content = '', fname = '', ftype = 'sms-dump';
+      if (kind === 'gallery') {
+        content = (phoneGallery(phone) || []).map(x => `${x.id || ''} | ${x.title || ''} | ${x.note || ''}`).join('\n');
+        fname = `${phone.id}-gallery.txt`;
+        ftype = 'gallery-dump';
+      } else if (kind === 'contacts') {
+        const cts = phoneContacts(phone, Date.now()) || [];
+        content = cts.map(c => `${c.name || ''} | ${c.number || ''}`).join('\n');
+        fname = `${phone.id}-contacts.txt`;
+        ftype = 'contacts-dump';
+      } else {
+        const msgs = (state.game.phoneWorld?.sessionFrozenSms) || phoneMessages(phone, Date.now()) || [];
+        content = msgs.map(m => `[${m.kind || 'chat'}] ${m.from || ''}: ${m.text || ''}`).join('\n');
+        fname = `${phone.id}-msgs.txt`;
+        ftype = 'sms-dump';
+      }
+      if (!state.game.computer.files) state.game.computer.files = [];
+      const file = {
+        id: 'file_ph_' + Date.now().toString(36),
+        name: fname,
+        type: ftype,
+        content,
+        path: '/phone/',
+        createdAt: Date.now(),
+        size: Math.max(1, Math.ceil((content.length || 1) / 1024)),
+        meta: {
+          kind: ftype,
+          phoneId: phone.id,
+          ownerName: phone.ownerName,
+          regionId: phone.regionId || '',
+          number: phone.number || '',
+          role: phone.role || ''
+        }
+      };
+      state.game.computer.files.unshift(file);
+      state.game.computer.files = state.game.computer.files.slice(0, 100);
+      toast(`Сохранено: ${file.name}`, 'success');
+      scheduleSave();
+      if (state.opened.has('ide')) renderWindow('ide');
+      break;
+    }
+    case 'phone-lab-lock':{
+      if(typeof lockPhone==='function') lockPhone(state.game, id, 30);
+      else if(state.game.phoneWorld){ state.game.phoneWorld.access[id]={...(state.game.phoneWorld.access[id]||{}), blockedUntil:Date.now()+30*60*1000}; }
+      toast('Lock 30м','success'); scheduleSave(); renderWindow('phone'); break;
+    }
+    case 'open-app':$('startMenu').hidden=true;$('startButton').setAttribute('aria-expanded','false');
+      if(app==='browser'&&state.game&&typeof ensureTrading==='function') ensureTrading(state.game);
+      openApp(app);break;
+    case 'close-window':closeWindow(el.closest('.app-window')?.dataset.window);break;
+    case 'toggle-pin-window': togglePinWindow(el.closest('.app-window')?.dataset.window); break;
+    case 'minimize-window':minimizeWindow(el.closest('.app-window')?.dataset.window);break;
+    case 'maximize-window':maximizeWindow(el.closest('.app-window')?.dataset.window);break;
+    case 'term-hide-kb':{
+      const tid = el.dataset.term;
+      const inp = document.querySelector(`[data-window="${tid}"] .term-cmd-input, [data-window="${tid}"] .terminal-form input`);
+      if (inp) { inp.blur(); }
+      try { document.activeElement && document.activeElement.blur(); } catch (e) {}
+      break;
+    }
+    case 'map-select':{
+      state.mapSelected = el.dataset.id || null;
+      renderWindow('map');
+      break;
+    }
+    case 'taskbar-window':{const w=state.opened.get(el.dataset.window);if(!w)break;if(!w.minimized&&state.active===w.id)minimizeWindow(w.id);else focusWindow(w.id);break;}
+    case 'install-plugin':doInstall(id);break;
+    case 'upgrade-hardware':doHardware(part);break;
+    case 'uninstall-plugin':confirm('Удалить плагин?',`Удалить ${esc(getPlugin(id)?.name||id)}? Пользовательские файлы не будут затронуты.`,()=>{const r=uninstallPlugin(state.game,id);actionResult(r);});break;
+    case 'accept-mission':{
+      if(!state.game){toast('Игра ещё не загружена.','error');break;}
+      const r=acceptMission(state.game,id);
+      if(r.ok){
+        state.selectedMissionId=id;
+        toast(r.message||'Контракт принят.','success');
+        scheduleSave();
+        if(state.opened.has('blackwire'))renderWindow('blackwire');
+        else openApp('blackwire');
+      } else {
+        toast(r.reason||'Не удалось принять контракт.','error');
+      }
+      break;
+    }
+    case 'mission-details':{
+      state.selectedMissionId=id;
+      if(!state.opened.has('blackwire'))openApp('blackwire');
+      else renderWindow('blackwire');
+      break;
+    }
+    case 'cancel-mission':{
+      confirm('Отменить контракт?',`Контракт <b>${esc(id)}</b> будет снят. Награда не будет выдана. Артефакты сохранятся.`,()=>{
+        const r=cancelMission(state.game,id);
+        actionResult(r);
+        if(r.ok){state.selectedMissionId=null;renderWindow('blackwire');}
+      });
+      break;
+    }
+    case 'mission-close-guide':state.selectedMissionId=null;if(state.opened.has('blackwire'))renderWindow('blackwire');break;
+    case 'mission-open-target':openMissionTarget(id);break;
+    
+    case 'browser-activate-tab': {
+      const winId = el.dataset.win || activeBrowserWinId();
+      const session = getBrowserSession(winId);
+      const idx = Number(el.dataset.idx);
+      if (!Number.isNaN(idx)) { session.active = idx; renderWindow(winId); }
+      break;
+    }
+    case 'browser-close-tab': {
+      browserCloseTab(el.dataset.win || activeBrowserWinId(), Number(el.dataset.idx));
+      break;
+    }
+    case 'browser-new-tab': {
+      const winId = el.dataset.win || activeBrowserWinId();
+      const session = getBrowserSession(winId);
+      session.tabs.push({ id: `tab_new_${Date.now()}`, siteId: '', page: 'start', title: 'Новая вкладка', history: [{ page: 'start' }], histIdx: 0 });
+      session.active = session.tabs.length - 1;
+      renderWindow(winId);
+      break;
+    }
+    case 'browser-back': {
+      const winId = el.dataset.win || activeBrowserWinId();
+      const session = getBrowserSession(winId);
+      const tab = session.tabs[session.active];
+      if (tab && tab.histIdx > 0) { tab.histIdx--; tab.page = tab.history[tab.histIdx].page; renderWindow(winId); }
+      break;
+    }
+    case 'browser-forward': {
+      const winId = el.dataset.win || activeBrowserWinId();
+      const session = getBrowserSession(winId);
+      const tab = session.tabs[session.active];
+      if (tab && tab.histIdx < tab.history.length - 1) { tab.histIdx++; tab.page = tab.history[tab.histIdx].page; renderWindow(winId); }
+      break;
+    }
+    case 'browser-reload': {
+      const winId = el.dataset.win || activeBrowserWinId();
+      renderWindow(winId);
+      break;
+    }
+    case 'browser-page': {
+      const winId = el.dataset.win || activeBrowserWinId();
+      const session = getBrowserSession(winId);
+      const tab = session.tabs[session.active];
+      if (tab) {
+        tab.page = el.dataset.page || 'home';
+        tab.history = (tab.history || []).slice(0, tab.histIdx + 1);
+        tab.history.push({ page: tab.page });
+        tab.histIdx = tab.history.length - 1;
+        renderWindow(winId);
+      }
+      break;
+    }
+    case 'browser-bookmark': {
+      const sid = el.dataset.site;
+      if (!sid) break;
+      const bm = state.game.browser.bookmarks || [];
+      if (!bm.includes(sid)) { bm.push(sid); state.game.browser.bookmarks = bm; toast('В закладках','success'); scheduleSave(); }
+      else toast('Уже в закладках');
+      break;
+    }
+
+    case 'browser-tab':{
+      let winId = el.dataset.win || activeBrowserWinId();
+      if (!winId || !state.opened.has(winId)) { openApp('browser'); winId = activeBrowserWinId(); }
+      ensureBrowserTab(site);
+      // attach site to this session
+      const session = getBrowserSession(winId);
+      const siteObj = getSite(state.game, site);
+      if (siteObj) {
+        let tab = session.tabs.find(t => t.siteId === site);
+        if (!tab) {
+          tab = { id: `tab_${site}`, siteId: site, page: 'home', title: siteObj.title, history: [{ page: 'home' }], histIdx: 0 };
+          session.tabs.push(tab);
+        }
+        session.active = session.tabs.indexOf(tab);
+        state.game.browser.activeSite = site;
+      }
+      renderWindow(winId);
+      break;
+    }
+    case 'copy-domain':{
+      const d=el.dataset.domain||'';
+      if(navigator.clipboard?.writeText){navigator.clipboard.writeText(d).then(()=>toast('Домен скопирован.','success')).catch(()=>toast(d,'info'));}
+      else toast(d,'info');
+      break;
+    }
+    case 'browser-home':state.browserTabs=[];state.game.browser.activeSite='';renderWindow('browser');break;
+    
+    case 'bookmark':case 'bookmark-site':{const ok=addBookmark(state.game,site);toast(ok?'Закладка сохранена.':'Не удалось сохранить закладку.',ok?'success':'error');scheduleSave();renderWindow('browser');break;}
+    case 'site-operation':runSiteOperation(site,el.dataset.op);break;
+    case 'export-result':exportResult(id);break;
+    case 'deliver-mission':confirm('Отправить результат?',`Файл по контракту <b>${esc(id)}</b> будет передан внутриигровому заказчику.`,()=>deliverResult(id));break;
+    case 'mail-open':{
+      state.mailView = el.dataset.id || id; state.mailCompose = null;
+      const msg = (state.game.mail?.messages||[]).find(x=>x.id===state.mailView);
+      if (msg && msg.status==='unread') msg.status='read';
+      scheduleSave(); renderWindow('mail'); break;
+    }
+    case 'mail-close-view':{ state.mailView=null; renderWindow('mail'); break; }
+    case 'mail-compose':{
+      state.mailCompose={to:'',subject:'',body:'',attachmentId:''}; state.mailView=null;
+      renderWindow('mail'); break;
+    }
+    case 'mail-compose-cancel':{ state.mailCompose=null; renderWindow('mail'); break; }
+    case 'mail-reply':{
+      const msg=(state.game.mail?.messages||[]).find(x=>x.id===(el.dataset.id||id));
+      if(!msg) break;
+      state.mailCompose={to:msg.from,subject:'Ответ на письмо',body:'',attachmentId:''};
+      state.mailView=null; renderWindow('mail'); break;
+    }
+    case 'mail-send':{
+      const root = document.querySelector('.mail-compose') || document;
+      const to=(root.querySelector('#mailTo')?.value||document.getElementById('mailTo')?.value||'').trim();
+      const subject=(root.querySelector('#mailSubject')?.value||document.getElementById('mailSubject')?.value||'').trim();
+      const body=(root.querySelector('#mailBody')?.value||document.getElementById('mailBody')?.value||'').trim();
+      const attSel=root.querySelector('#mailAttach')||document.getElementById('mailAttach');
+      const att=(attSel?.value||'').trim();
+      if(!to){ toast('Укажи Имя Фамилия NPC','error'); break; }
+      try {
+        const r = sendPlayerMail(state.game, { to, subject, body, attachmentId: att || undefined });
+        if(!r.ok){ toast(r.reason||'Ошибка отправки','error'); break; }
+        toast(r.hasAttachment ? 'Письмо с вложением отправлено' : 'Письмо отправлено','success');
+        state.mailCompose=null;
+        state.mailView=null;
+        scheduleSave();
+        renderWindow('mail');
+        refreshOpenApps(['mail']);
+      } catch(err){ console.error(err); toast(String(err.message||err),'error'); }
+      break;
+    }
+
+    case 'file-copy-content':{
+      const f=[...state.game.computer.files,...state.game.editor.files].find(x=>x.id===id);
+      if(f&&navigator.clipboard?.writeText){navigator.clipboard.writeText(String(f.content||'')).then(()=>toast('Скопировано','success')).catch(()=>toast('Нет доступа к буферу','error'));}
+      else if(f) toast(String(f.content||'').slice(0,200),'info');
+      break;
+    }
+    case 'file-select':state.selectedFileId=id;if(!state.opened.has('files'))openApp('files');else{const w=state.opened.get('files');if(w)w.minimized=false;renderWindow('files');focusWindow('files');}break;
+    case 'file-delete':{
+      const all=[state.game.computer.files,state.game.editor.files];
+      for(const arr of all){const i=arr.findIndex(f=>f.id===id);if(i>=0){arr.splice(i,1);break;}}
+      state.selectedFileId=null;scheduleSave();renderWindow('files');toast('Файл удалён','success');break;
+    }
+    case 'file-open':state.selectedFileId=id;renderWindow('mail');break;
+    case 'file-close':state.selectedFileId=null;renderWindow('mail');break;
+    case 'mail-delete':{
+      const mid = el.dataset.id || id;
+      state.game.mail.messages = (state.game.mail.messages||[]).filter(x => x.id !== mid);
+      if (state.mailView === mid) state.mailView = null;
+      if (state.selectedMail === mid) state.selectedMail = null;
+      scheduleSave(); renderWindow('mail'); break;
+    }
+    case 'mail-mark':{const m=state.game.mail.messages.find(x=>x.id===id);if(m)m.status='read';scheduleSave();renderWindow('mail');break;}
+    case 'map-location':{
+      const locId=el.dataset.location;
+      state.mapSelected=locId;
+      renderWindow('map');
+      break;
+    }
+    case 'bank-attempt':{const risk=bankRisk(state.game);confirm('Запустить банковскую симуляцию?',`Вероятность виртуальной трассировки: <b>${Math.round(risk.traceChance*100)}%</b>.<br>При неудаче будут конфискованы все <b>${fmt(state.game.economy.credits)} CR</b>, а Aster Bank заблокируется на <b>24 часа</b> реального времени. Другие контракты останутся доступны, но их награды во время блокировки будут конфискованы. Продолжить?`,()=>actionResult(attemptBankSimulation(state.game,true)),{danger:true,confirmText:'ПОДТВЕРЖДАЮ РИСК'});break;}
+    case 'nbs-template':case 'nbs-validate':case 'nbs-save':case 'nbs-run':runNbsAction(action.replace('nbs-',''));break;
+    case 'editor-open':{const f=state.game.editor.files.find(x=>x.id===id);if(f){state.editorText=f.content;state.editorName=f.name.replace(/\.nbs$/,'');renderWindow('ide');}break;}
+    case 'ide-new':state.editorName='mission_report';state.editorText=nbsTemplate();state.nbsOutput='Новый сценарий готов.';renderWindow('ide');break;
+    case 'ide-clear':state.editorText='';{const editor=$('nbsEditor');if(editor){editor.value='';syncNbsHighlight(editor);editor.focus();}}break;
+    case 'ide-copy':{const editor=$('nbsEditor');if(editor){editor.select();const value=editor.value;try{if(navigator.clipboard?.writeText){navigator.clipboard.writeText(value).then(()=>toast('Сценарий скопирован.','success')).catch(()=>toast('Браузер не разрешил доступ к буферу обмена. Используй Ctrl/Cmd+C.','error'));}else{const ok=document.execCommand?.('copy');toast(ok?'Сценарий скопирован.':'Используй Ctrl/Cmd+C для копирования.',ok?'success':'info');}}catch{toast('Используй Ctrl/Cmd+C для копирования.','info');}}break;}
+    case 'ide-find':{const editor=$('nbsEditor'),input=$('nbsSearch'),query=input?.value?.trim();if(!editor||!query){toast('Введи текст для поиска.','error');break;}const text=editor.value.toLowerCase(),q=query.toLowerCase();let index=text.indexOf(q,editor.selectionEnd||0);if(index<0)index=text.indexOf(q);if(index<0){toast('Совпадений не найдено.','error');break;}editor.focus();editor.setSelectionRange(index,index+query.length);break;}
+    case 'editor-delete':confirm('Удалить NBS-файл?',`Файл ${esc(state.game.editor.files.find(x=>x.id===id)?.name||'')} будет удалён.`,()=>{state.game.editor.files=state.game.editor.files.filter(x=>x.id!==id);scheduleSave();refreshOpenApps();toast('Файл удалён.','success');},{danger:true,confirmText:'УДАЛИТЬ'});break;
+    case 'modal-cancel':closeModal();break;
+    case 'modal-confirm':finishModal();break;
+  }
+}
+
+function onUiAction(event){
+  const button=event.target.closest('[data-action]');
+  if(!button)return;
+  // Prefer the innermost action target (e.g. tab close over tab activate).
+  const now=Date.now();
+  if(button._nbActAt && now-button._nbActAt<350)return;
+  button._nbActAt=now;
+  // Don't preventDefault on inputs; only on actionable chrome controls
+  if(!event.target.closest('input,textarea,select')) event.preventDefault();
+  try{
+    handleAction(button.dataset.action,button);
+  }catch(err){
+    console.error('[NULLBYTE] action',button.dataset.action,err);
+    toast(String(err.message||err),'error');
+  }
+}
+document.addEventListener('click',onUiAction);
+document.addEventListener('pointerup',onUiAction);
+
+document.addEventListener('pointerdown',event=>{
+  const editable=event.target.closest('input,textarea,select,[contenteditable="true"]');
+  if(editable){
+    const win=editable.closest('.app-window');
+    if(win)focusWindow(win.dataset.window);
+    // Prevent the desktop window layer from stealing focus after a touch.
+    queueMicrotask(()=>{ if(editable.isConnected && !editable.disabled) editable.focus({preventScroll:true}); });
+  }
+},true);
+$('startButton').addEventListener('click',()=>{$('startMenu').hidden=!$('startMenu').hidden;$('startButton').setAttribute('aria-expanded',String(!$('startMenu').hidden));});
+document.addEventListener('pointerdown',e=>{if(!$('startMenu').hidden&&!$('startMenu').contains(e.target)&&!e.target.closest('#startButton')){$('startMenu').hidden=true;$('startButton').setAttribute('aria-expanded','false');}});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){if(!$('modalBackdrop').hidden)closeModal();else if(!$('startMenu').hidden){$('startMenu').hidden=true;$('startButton').setAttribute('aria-expanded','false');}}});
+$('modalBackdrop').addEventListener('click',e=>{if(e.target===$('modalBackdrop')&&state.modalConfirm===null)closeModal();});
+
+window.addEventListener('beforeunload',()=>{if(state.game&&!state.saveBlocked){state.game.meta.updatedAt=Date.now();try{localStorage.setItem('nullbyte_save_v1',JSON.stringify(state.game));}catch{}}});
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden')persist();});
+window.addEventListener('resize',()=>{for(const [id,w] of state.opened){const el=document.querySelector(`[data-window="${id}"]`);if(!el||w.maximized)continue;const a=$('desktopWorkspace');const maxX=Math.max(0,a.clientWidth-el.offsetWidth),maxY=Math.max(0,a.clientHeight-el.offsetHeight);w.left=Math.min(w.left,maxX);w.top=Math.min(w.top,maxY);el.style.left=`${w.left}px`;el.style.top=`${w.top}px`;}});
+let wasBankLocked=false;
+setInterval(()=>{
+  updateClock();if(!state.game)return;
+  const notices=processTimedEvents(state.game);
+  if(notices.length){notices.forEach(n=>toast(n,'success'));scheduleSave();refreshOpenApps();}
+  const bankLocked=state.game.bank.lockUntil>Date.now();
+  $('systemStatus').textContent=bankLocked?'SYSTEM READY / BANK LOCKED':'SYSTEM READY';
+  document.querySelectorAll('[data-bank-until]').forEach(el=>{el.textContent=humanLeft(Number(el.dataset.bankUntil)-Date.now());});
+  if(wasBankLocked&&!bankLocked)refreshOpenApps(['bank','darkshop','forge','computer']);
+  wasBankLocked=bankLocked;
+},1000);
+
+// Prevent browser zoom gestures/shortcuts so the desktop layout stays stable.
+document.addEventListener('wheel',event=>{if(event.ctrlKey||event.metaKey)event.preventDefault();},{passive:false});
+document.addEventListener('keydown',event=>{
+  if((event.ctrlKey||event.metaKey)&&['+','=','-','0'].includes(event.key))event.preventDefault();
+});
+for(const name of ['gesturestart','gesturechange','gestureend']){
+  document.addEventListener(name,event=>event.preventDefault(),{passive:false});
+}
+document.addEventListener('submit',event=>{
+  const form=event.target;
+  if(!(form instanceof HTMLFormElement))return;
+  if(form.id==='mailComposeForm'){
+    event.preventDefault();
+    const to=form.elements.to?.value?.trim()||'system';
+    const subject=form.elements.subject?.value?.trim()||'Без темы';
+    const body=form.elements.body?.value?.trim()||'';
+    const attach=form.elements.attach?.value||'';
+    state.game.mail.messages.unshift({
+      id:'mail_'+Date.now().toString(36), direction:'out', from:state.game.player.nickname, to, subject, body,
+      at:Date.now(), attachments:attach?[attach]:[], status:'sent'
+    });
+    if(attach){
+      const f=(state.game.computer.files||[]).find(x=>x.id===attach);
+      if(f && (f.type==='mail-drop' || /MAIL-DROP|mail-drop|drop/i.test(f.name+f.content))){
+        const res = scheduleMailDrop(state.game, to, f);
+        if(res.ok && res.phone){
+          state.game.mail.messages.unshift({
+            id:'mail_sys_'+Date.now().toString(36), direction:'in', from:'NULLBYTE MailDrop',
+            to:state.game.player.nickname,
+            subject:'Drop queued',
+            body:`Доставка ${res.drop.npcName}. Ожидание открытия: 5с–10м. PHONE будет доступен после открытия.`,
+            at:Date.now(), attachments:[], status:'unread'
+          });
+        } else if(res.ok && !res.phone){
+          state.game.mail.messages.unshift({
+            id:'mail_sys_'+Date.now().toString(36), direction:'in', from:'NULLBYTE MailDrop',
+            to:state.game.player.nickname,
+            subject:'Drop: NPC не найден',
+            body:`Имя «${to}» не найдено в реестре сетей. Укажи точное имя владельца из отчёта net-analyzer.`,
+            at:Date.now(), attachments:[], status:'unread'
+          });
+        }
+      }
+    }
+    scheduleSave(); renderWindow('mail');
+    return;
+  }
+  if(form.id==='browserForm'||form.classList?.contains('chrome-form')){
+    event.preventDefault();
+    const winId=form.closest('[data-window]')?.dataset.window||activeBrowserWinId();
+    navigateBrowser(form.elements.address?.value||form.querySelector('input')?.value||'', winId);
+  }
+  if(form.classList?.contains('terminal-form')){
+    event.preventDefault();
+    const termId=form.getAttribute('data-term')||form.closest('[data-window]')?.dataset.window;
+    if(!termId)return;
+    const input=form.elements.command;
+    const val=input?.value||'';
+    if(!val.trim())return;
+    if(input)input.value='';
+    runTerminalCommand(termId, val).then(()=>{
+      queueMicrotask(()=>{
+        const i=document.querySelector(`[data-window="${termId}"] .term-inline-input, [data-window="${termId}"] .terminal-form input`);
+        if(i) i.focus({preventScroll:true});
+        scrollTerminalBottom(termId, true);
+      });
+    });
+  }
+});
+boot();
