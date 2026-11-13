@@ -2128,7 +2128,10 @@ export function sendPlayerMail(state, { to, subject, body, attachmentId }) {
       return on === nameL || on.includes(nameL) || nameL.includes(on);
     }) || null;
   }
-  if (!found) return { ok: false, reason: 'NPC не найден. Укажи точное «Имя Фамилия» из сети/скана.' };
+  if (!found) {
+    // soft: still allow outbound letter so player can write freely
+    found = { id: 'npc_open_' + nameL.replace(/\s+/g, '_').slice(0, 24), ownerName: name, regionId: state.phoneWorld?.network?.regionId || '' };
+  }
 
   if (!state.mail) state.mail = { messages: [], pendingDelivery: [] };
   if (!state.mail.messages) state.mail.messages = [];

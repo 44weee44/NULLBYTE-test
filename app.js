@@ -358,7 +358,9 @@ function printNeofetch(termId) {
     const wrap = document.createElement('div');
     wrap.className = 'term-block';
     wrap.innerHTML = html;
-    out.appendChild(wrap);
+    const form = out.querySelector('.term-inline-form');
+    if (form) out.insertBefore(wrap, form);
+    else out.appendChild(wrap);
     if (term.scrollPin !== false) out.scrollTop = out.scrollHeight;
   }
 }
@@ -1469,10 +1471,13 @@ function termAdd(termId, text, type = '') {
     const row = document.createElement('div');
     row.className = 'term-line' + (type ? ' ' + type : '');
     row.textContent = text;
-    out.appendChild(row);
+    const form = out.querySelector('.term-inline-form');
+    if (form) out.insertBefore(row, form);
+    else out.appendChild(row);
     if (term.scrollPin !== false) out.scrollTop = out.scrollHeight;
   }
 }
+
 
 
 
@@ -1550,8 +1555,13 @@ function clearTerminalView(termId) {
   if (!term) return;
   term.lines = [];
   const out = document.querySelector(`[data-window="${termId}"] .terminal-output`);
-  if (out) out.innerHTML = '';
+  if (out) {
+    const form = out.querySelector('.term-inline-form');
+    out.innerHTML = '';
+    if (form) out.appendChild(form);
+  }
 }
+
 
 
 
@@ -1923,17 +1933,18 @@ function renderTerminal(g, termId) {
     return `<div class="term-line ${esc(l.type || '')}">${esc(l.text)}</div>`;
   }).join('');
   const titleUser = ((g.player && g.player.nickname) || 'user').toLowerCase().replace(/[^a-z0-9_-]/g, '') || 'user';
+  // Input sits INSIDE the scroll area, right after last line (real tty)
   return `<div class="term-root nb-term" data-term="${esc(termId)}">
   <div class="nb-term-titlebar">
     <img class="termglyph" src="dragon.png" alt="" draggable="false">
     <span class="title-user">${esc(titleUser)}@nullbyte-os</span>
     <span class="path">:~</span>
   </div>
-  <div class="terminal-shell terminal-grid">
-    <div class="terminal-output screen" data-term-out="${esc(termId)}">${body}</div>
+  <div class="terminal-output screen" data-term-out="${esc(termId)}">
+    ${body}
     <form class="term-inline-form terminal-form promptrow" data-term="${esc(termId)}">
       <span class="term-inline-prompt prompt">${esc(prompt)}</span>
-      <input class="term-inline-input" id="cmd-${esc(termId)}" name="command" type="text" autocomplete="off" spellcheck="false" autocapitalize="off" enterkeyhint="send" aria-label="Команда">
+      <input class="term-inline-input" name="command" type="text" autocomplete="off" spellcheck="false" autocapitalize="off" enterkeyhint="send" aria-label="Команда">
     </form>
   </div>
 </div>`;
@@ -2528,7 +2539,15 @@ function handleAction(action,el) {
           state.pinError = '';
           state.phoneLabTab = 'home';
           state.phoneUnlocked = r.phoneId || pid;
-          if (r.xpGain) toast('+' + r.xpGain + ' XP за взлом телефона' + (r.leveled ? ' · LEVEL UP!' : ''), 'success');
+          if (r.xpGain) {
+            try {
+              if (typeof grantXp === 'function' && !(r.xp >= 0 && r.leveled !== undefined && false)) {
+                // XP already applied in unlockWithPin; just toast
+              }
+            } catch (e) {}
+            toast('+' + r.xpGain + ' XP' + (r.leveled ? ' · LEVEL UP ' + (r.level || '') : ''), 'success');
+            refreshOpenApps(['profile']);
+          }
           scheduleSave();
           // force access unlocked
           try {
@@ -2556,17 +2575,20 @@ function handleAction(action,el) {
       renderWindow('phone'); break;
     }
     case 'phone-file-download': {
-      const phoneId = target.getAttribute('data-phone');
-      const fileId = target.getAttribute('data-file');
+      const phoneId = el.dataset.phone || el.getAttribute('data-phone');
+      const fileId = el.dataset.file || el.getAttribute('data-file');
       const phone = findPhone(phoneId);
-      const list = phone ? phoneFiles(phone) : [];
-      const file = list.find(f => f.id === fileId);
+      if (!phone) { toast('Телефон не найден', 'error'); break; }
+      let list = [];
+      try { list = phoneFiles(phone) || []; } catch (err) { toast(String(err.message||err), 'error'); break; }
+      const file = list.find(f => f.id === fileId || f.name === fileId);
       if (!file) { toast('Файл не найден', 'error'); break; }
-      if (!state.game.computer.files) state.game.computer.files = [];
-      const id = 'dl_' + file.id + '_' + Date.now().toString(36);
+      if (!state.game.computer) state.game.computer = {};
+      if (!Array.isArray(state.game.computer.files)) state.game.computer.files = [];
+      const fid = 'dl_' + String(file.id || 'f') + '_' + Date.now().toString(36);
       state.game.computer.files.unshift({
-        id,
-        name: file.name,
+        id: fid,
+        name: file.name || 'file.txt',
         type: file.kind || 'file',
         content: file.body || '',
         body: file.body || '',
@@ -2574,8 +2596,10 @@ function handleAction(action,el) {
         at: Date.now()
       });
       state.game.computer.files = state.game.computer.files.slice(0, 80);
-      toast('Скачано: ' + file.name, 'success');
+      toast('Скачано: ' + (file.name || 'file'), 'success');
       scheduleSave();
+      if (state.opened.has('ide')) renderWindow('ide');
+      if (state.opened.has('computer')) renderWindow('computer');
       break;
     }
     case 'phone-lab-export':{
@@ -2793,23 +2817,23 @@ function handleAction(action,el) {
       state.mailView=null; renderWindow('mail'); break;
     }
     case 'mail-send':{
-      const root = document.querySelector('.mail-compose') || document;
-      const to=(root.querySelector('#mailTo')?.value||document.getElementById('mailTo')?.value||'').trim();
-      const subject=(root.querySelector('#mailSubject')?.value||document.getElementById('mailSubject')?.value||'').trim();
-      const body=(root.querySelector('#mailBody')?.value||document.getElementById('mailBody')?.value||'').trim();
-      const attSel=root.querySelector('#mailAttach')||document.getElementById('mailAttach');
-      const att=(attSel?.value||'').trim();
-      if(!to){ toast('Укажи Имя Фамилия NPC','error'); break; }
+      const root = document.querySelector('.mail-compose') || document.querySelector('[data-window="mail"]') || document;
+      const to=(root.querySelector('#mailTo')?.value||'').trim();
+      const subject=(root.querySelector('#mailSubject')?.value||'').trim();
+      const body=(root.querySelector('#mailBody')?.value||'').trim();
+      const att=(root.querySelector('#mailAttach')?.value||'').trim();
+      if(!to){ toast('Укажи получателя (Имя Фамилия)','error'); break; }
+      if(typeof sendPlayerMail !== 'function'){ toast('sendPlayerMail недоступен','error'); break; }
       try {
         const r = sendPlayerMail(state.game, { to, subject, body, attachmentId: att || undefined });
-        if(!r.ok){ toast(r.reason||'Ошибка отправки','error'); break; }
-        toast(r.hasAttachment ? 'Письмо с вложением отправлено' : 'Письмо отправлено','success');
-        state.mailCompose=null;
-        state.mailView=null;
+        if(!r || !r.ok){ toast((r && r.reason) || 'Ошибка отправки','error'); break; }
+        if(!state.game.mail) state.game.mail = { messages: [], pendingDelivery: [] };
+        toast(r.hasAttachment ? 'Письмо с вложением отправлено' : 'Письмо отправлено → ' + to, 'success');
+        state.mailCompose = null;
+        state.mailView = null;
         scheduleSave();
         renderWindow('mail');
-        refreshOpenApps(['mail']);
-      } catch(err){ console.error(err); toast(String(err.message||err),'error'); }
+      } catch(err){ console.error('[mail-send]', err); toast(String(err.message||err),'error'); }
       break;
     }
 

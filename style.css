@@ -1068,3 +1068,54 @@ html,body{background:#0a0a0a!important;font-size:12px!important}
   .nb-term .info { font-size: 9.8px; }
   .nb-term .terminal-output.screen { padding: 11px 8px 10px; font-size: 10.5px; }
 }
+
+
+/* ===== even smaller mobile UI ===== */
+.desktop-icons{
+  display:grid!important;
+  grid-template-columns:repeat(4,minmax(0,1fr))!important;
+  gap:8px 6px!important;
+  padding:10px 8px!important;
+  align-content:start!important;
+  width:100%!important;
+  box-sizing:border-box!important;
+}
+.desktop-icon{
+  width:100%!important;
+  max-width:72px!important;
+  min-height:58px!important;
+  margin:0 auto!important;
+  padding:2px!important;
+}
+.desktop-icon-symbol{
+  width:32px!important;height:32px!important;border-radius:8px!important;
+}
+.desktop-icon span:last-child{font-size:7.5px!important;line-height:1.1!important;max-width:100%;overflow:hidden;text-overflow:ellipsis}
+
+.top-panel{height:32px!important;min-height:32px!important}
+.desktop-shell{grid-template-rows:32px minmax(0,1fr) 40px!important}
+.taskbar{height:40px!important}
+.app-window{border-radius:6px!important}
+.window-titlebar,.app-window>header{height:26px!important}
+.window-content{padding:8px 10px!important}
+.btn{font-size:10px!important;padding:5px 8px!important}
+.panel{padding:8px!important}
+
+/* terminal: single scroll column, input after text */
+.nb-term{display:flex;flex-direction:column;height:100%;min-height:0}
+.nb-term .terminal-output.screen{
+  flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;
+  display:block;padding:10px 10px 16px;
+}
+.nb-term .promptrow,.nb-term .terminal-form{
+  display:flex!important;align-items:center;gap:6px;
+  margin-top:6px!important;padding:0!important;
+  position:relative; /* stays in document flow after lines */
+}
+.nb-term .term-inline-input{font-size:14px!important}
+.nb-term .neofetch{grid-template-columns:72px minmax(0,1fr);gap:8px;margin:8px 0}
+.nb-term .dragon{width:64px!important;height:110px!important}
+.nb-term .dragonbox{min-height:110px;padding-right:6px}
+.nb-term .info{font-size:9.5px!important;line-height:1.45}
+.nb-term .progress{height:12px;margin-top:6px;max-width:200px}
+.nb-term-titlebar{flex:0 0 28px;height:28px;font-size:10px}
