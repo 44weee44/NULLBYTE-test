@@ -293,13 +293,14 @@ function isTerminalId(id){return id==='terminal'||String(id).startsWith('term-')
 function terminalIconId(id){return isTerminalId(id)?'terminal':id;}
 
 
+
 function hwName(part, level) {
   const list = (typeof HARDWARE !== 'undefined' && HARDWARE[part]) || [];
   const row = list.find(x => x.level === (level || 1)) || list[0];
   return (row && row.name) || ('L' + (level || 1));
 }
 
-function buildNeofetchLines(g) {
+function buildNeofetchHtml(g) {
   g = g || state.game || {};
   const nick = ((g.player && g.player.nickname) || 'user').toLowerCase().replace(/[^a-z0-9_-]/g, '') || 'user';
   const c = g.computer || {};
@@ -310,55 +311,67 @@ function buildNeofetchLines(g) {
   let ramUsed = 1;
   try { ramUsed = (getRamUsage(g).used) || 1; } catch (e) {}
   const plugs = (c.installedPlugins || []).length;
-  // Dragon ASCII (compact, green on left feel)
-  const art = [
-    '        ..=******=..',
-    '     .=*##########*=.',
-    "   .*##*'        '*##*.",
-    '  *##*   .o  o.    *##*',
-    " *##*     '--'      *##*",
-    ' *##*.    /\\/\\     .*##*',
-    "  *##*~..      ..~*##*",
-    "   '*###*=....=*###*'",
-    "      '~*######*~'",
-    "          '**'",
+  const memStr = (ramUsed * 1024) + 'MiB / ' + ((ram.gb || 4) * 1024) + 'MiB';
+  const lines = [
+    ['OS', 'NULLBYTE OS ' + (c.os || 1) + '.0 x86_64'],
+    ['Kernel', 'nbkernel-' + (c.os || 1) + '.0.0-nullbyte'],
+    ['Uptime', uptime],
+    ['Packages', plugs + ' (plugins)'],
+    ['Shell', 'nbshell 1.0'],
+    ['Resolution', 'desktop'],
+    ['DE', 'NULLBYTE Desktop'],
+    ['WM', 'nb-wm'],
+    ['Terminal', 'alacritty'],
+    ['CPU', hwName('cpu', c.cpu)],
+    ['GPU', hwName('gpu', c.gpu)],
+    ['Memory', memStr],
+    ['Storage', hwName('storage', c.storage)],
+    ['Level', ((g.player && g.player.level) || 1) + ' · XP ' + ((g.player && g.player.xp) || 0)],
+    ['Credits', ((g.economy && g.economy.credits) || 0) + ' CR'],
   ];
-  const lines = art.map((row, i) => ({ text: row, type: 'green' }));
-  lines.push({ text: '', type: 'muted' });
-  lines.push({ text: nick + '@nullbyte-os', type: 'title' });
-  lines.push({ text: '---------------------------', type: 'muted' });
-  lines.push({ text: 'OS: NULLBYTE OS ' + (c.os || 1) + '.0 x86_64', type: '' });
-  lines.push({ text: 'Host: Operator Workstation', type: '' });
-  lines.push({ text: 'Kernel: nbkernel-' + (c.os || 1) + '.0.0-nullbyte', type: '' });
-  lines.push({ text: 'Uptime: ' + uptime, type: '' });
-  lines.push({ text: 'Packages: ' + plugs + ' (plugins)', type: '' });
-  lines.push({ text: 'Shell: nbshell 1.0', type: '' });
-  lines.push({ text: 'Resolution: desktop', type: '' });
-  lines.push({ text: 'DE: NULLBYTE Desktop', type: '' });
-  lines.push({ text: 'WM: nb-wm', type: '' });
-  lines.push({ text: 'Terminal: Alacritty*', type: '' });
-  lines.push({ text: 'CPU: ' + hwName('cpu', c.cpu), type: '' });
-  lines.push({ text: 'GPU: ' + hwName('gpu', c.gpu), type: '' });
-  lines.push({ text: 'Memory: ' + ramUsed + 'MiB / ' + ((ram.gb || 4) * 1024) + 'MiB', type: '' });
-  lines.push({ text: 'Storage: ' + hwName('storage', c.storage), type: '' });
-  lines.push({ text: 'Level: ' + ((g.player && g.player.level) || 1) + ' · XP ' + ((g.player && g.player.xp) || 0), type: 'blue' });
-  lines.push({ text: 'Credits: ' + ((g.economy && g.economy.credits) || 0) + ' CR', type: 'amber' });
-  lines.push({ text: '', type: 'muted' });
-  lines.push({ text: '████ ████ ████ ████ ████', type: 'palette' });
-  return lines;
+  const info = lines.map(([k, v]) =>
+    `<div class="info-line"><span class="key">${k}:</span> ${esc(String(v))}</div>`
+  ).join('');
+  return `<div class="neofetch">
+    <div class="dragonbox"><img class="dragon" src="dragon.png" alt="NULLBYTE" draggable="false"></div>
+    <div class="info">
+      <div class="infohead">NULLBYTE OS</div>
+      ${info}
+      <div class="progress" aria-hidden="true"></div>
+    </div>
+  </div>`;
+}
+
+/** Lines for plain-text fallback / session storage */
+function buildNeofetchLines(g) {
+  return [{ text: '__NEOFETCH__', type: 'html', html: buildNeofetchHtml(g) }];
 }
 
 function printNeofetch(termId) {
-  buildNeofetchLines(state.game).forEach(l => termAdd(termId, l.text, l.type || ''));
+  const term = getTerm(termId);
+  if (!term) return;
+  const html = buildNeofetchHtml(state.game);
+  term.lines.push({ text: '__NEOFETCH__', type: 'html', html });
+  term.lines = term.lines.slice(-200);
+  const out = document.querySelector(`[data-window="${termId}"] .terminal-output`);
+  if (out) {
+    const wrap = document.createElement('div');
+    wrap.className = 'term-block';
+    wrap.innerHTML = html;
+    out.appendChild(wrap);
+    if (term.scrollPin !== false) out.scrollTop = out.scrollHeight;
+  }
 }
 
+
 function createTerminalSession(){
-  const lines = (typeof buildNeofetchLines === 'function')
-    ? buildNeofetchLines(state.game)
+  const html = typeof buildNeofetchHtml === 'function' ? buildNeofetchHtml(state.game) : '';
+  const lines = html
+    ? [{ text: '__NEOFETCH__', type: 'html', html }, { text: 'Type help · plugins · run <plugin-id> · neofetch', type: 'muted' }]
     : [{ text: 'NULLBYTE OS', type: 'green' }];
-  lines.push({ text: 'Type help · plugins · run <id> · neofetch', type: 'muted' });
   return { lines, plugin: null, busy: false, scrollPin: true };
 }
+
 
 function getTerm(id){
   if(!isTerminalId(id))return null;
@@ -1346,6 +1359,106 @@ function scrollTerminalBottom(termId, force = false) {
   });
 }
 
+
+async function runTerminalCommand(termId, raw) {
+  const term = getTerm(termId);
+  if (!term) return;
+  const cmd = String(raw || '').trim();
+  if (!cmd) return;
+  termAdd(termId, terminalPrompt(term) + ' ' + cmd, 'prompt');
+  term.scrollPin = true;
+  if (term.busy) { termAdd(termId, 'busy…', 'error'); return; }
+
+  const parts = cmd.split(/\s+/);
+  const c0 = (parts[0] || '').toLowerCase();
+  const arg1 = parts[1] || '';
+
+  // Plugin shell
+  if (term.plugin) {
+    if (c0 === 'exit' || c0 === 'quit') {
+      term.plugin = null;
+      clearTerminalView(termId);
+      printNeofetch(termId);
+      termAdd(termId, 'Type help · plugins · run <plugin-id> · neofetch', 'muted');
+      const pr = document.querySelector(`[data-window="${termId}"] .term-inline-prompt`);
+      if (pr) pr.textContent = terminalPrompt(term);
+      return;
+    }
+    term.busy = true;
+    try {
+      const result = await runPluginShellCommand(state.game, term.plugin, cmd, Date.now());
+      (result && result.lines || []).forEach(l => termAdd(termId, typeof l === 'string' ? l : (l.text || ''), (l && l.type) || ''));
+      if (result && result.clear) clearTerminalView(termId);
+      if (result && (result.closePhoneLab || result.clearPhone)) {
+        state._phoneTarget = null; state.phoneUnlocked = null; state.pinInput = '';
+      }
+      if (result && result.progressUpdated) scheduleSave();
+      if (result && result.refresh) refreshOpenApps();
+    } catch (e) {
+      termAdd(termId, String(e.message || e), 'error');
+    } finally {
+      term.busy = false;
+      const pr = document.querySelector(`[data-window="${termId}"] .term-inline-prompt`);
+      if (pr) pr.textContent = terminalPrompt(term);
+    }
+    return;
+  }
+
+  if (c0 === 'neofetch' || c0 === 'fastfetch' || c0 === 'fetch') {
+    printNeofetch(termId);
+    return;
+  }
+  if (c0 === 'clear' || c0 === 'cls') {
+    clearTerminalView(termId);
+    return;
+  }
+  if (c0 === 'help') {
+    termAdd(termId, 'Commands: help · neofetch · plugins · run <id> · status · clear', 'muted');
+    termAdd(termId, 'Plugins: net-link · net-analyzer · phone-access · …', 'muted');
+    return;
+  }
+  if (c0 === 'plugins' || c0 === 'plugin') {
+    const list = (state.game.computer && state.game.computer.installedPlugins) || [];
+    termAdd(termId, 'Installed:', 'green');
+    list.forEach(id => {
+      const p = getPlugin(id);
+      termAdd(termId, '  ' + id + (p ? ' — ' + p.name : ''), 'muted');
+    });
+    if (!list.length) termAdd(termId, '  (none)', 'muted');
+    return;
+  }
+  if (c0 === 'status') {
+    const g = state.game;
+    termAdd(termId, 'operator ' + ((g.player && g.player.nickname) || '—') + ' · L' + ((g.player && g.player.level) || 1), '');
+    termAdd(termId, 'credits ' + ((g.economy && g.economy.credits) || 0) + ' · net ' + (g.phoneWorld && g.phoneWorld.network ? g.phoneWorld.network.regionId : 'offline'), '');
+    return;
+  }
+  if (c0 === 'run' || c0 === 'exec') {
+    if (!arg1) { termAdd(termId, 'usage: run <plugin-id>', 'error'); return; }
+    const installed = (state.game.computer.installedPlugins || []).includes(arg1);
+    if (!installed) { termAdd(termId, 'not installed: ' + arg1, 'error'); return; }
+    if (typeof isPluginLocked === 'function' && isPluginLocked(arg1)) {
+      termAdd(termId, 'plugin locked: ' + arg1, 'error'); return;
+    }
+    term.busy = true;
+    try {
+      term.plugin = arg1;
+      await enterPluginWorkspace(termId, arg1);
+    } catch (e) {
+      termAdd(termId, String(e.message || e), 'error');
+      term.plugin = null;
+    } finally {
+      term.busy = false;
+      const pr = document.querySelector(`[data-window="${termId}"] .term-inline-prompt`);
+      if (pr) pr.textContent = terminalPrompt(term);
+    }
+    return;
+  }
+  if (c0 === 'whoami') { termAdd(termId, (state.game.player && state.game.player.nickname) || 'user', ''); return; }
+  if (c0 === 'pwd') { termAdd(termId, '/home/' + (((state.game.player && state.game.player.nickname) || 'user').toLowerCase()), ''); return; }
+  termAdd(termId, 'bash: ' + c0 + ': command not found. Type help.', 'error');
+}
+
 function termAdd(termId, text, type = '') {
   const term = getTerm(termId);
   if (!term) return;
@@ -1360,6 +1473,7 @@ function termAdd(termId, text, type = '') {
     if (term.scrollPin !== false) out.scrollTop = out.scrollHeight;
   }
 }
+
 
 
 function pluginBanner(pluginId) {
@@ -1438,6 +1552,7 @@ function clearTerminalView(termId) {
   const out = document.querySelector(`[data-window="${termId}"] .terminal-output`);
   if (out) out.innerHTML = '';
 }
+
 
 
 
@@ -1803,15 +1918,22 @@ async function enterPlugin(termId, pluginId) {
 function renderTerminal(g, termId) {
   const term = getTerm(termId);
   const prompt = terminalPrompt(term);
-  const lines = (term.lines || []).map(l =>
-    `<div class="term-line ${esc(l.type || '')}">${esc(l.text)}</div>`
-  ).join('');
-  return `<div class="term-root" data-term="${esc(termId)}">
+  const body = (term.lines || []).map(l => {
+    if (l.type === 'html' && l.html) return `<div class="term-block">${l.html}</div>`;
+    return `<div class="term-line ${esc(l.type || '')}">${esc(l.text)}</div>`;
+  }).join('');
+  const titleUser = ((g.player && g.player.nickname) || 'user').toLowerCase().replace(/[^a-z0-9_-]/g, '') || 'user';
+  return `<div class="term-root nb-term" data-term="${esc(termId)}">
+  <div class="nb-term-titlebar">
+    <img class="termglyph" src="dragon.png" alt="" draggable="false">
+    <span class="title-user">${esc(titleUser)}@nullbyte-os</span>
+    <span class="path">:~</span>
+  </div>
   <div class="terminal-shell terminal-grid">
-    <div class="terminal-output" data-term-out="${esc(termId)}">${lines}</div>
-    <form class="term-inline-form terminal-form" data-term="${esc(termId)}">
-      <span class="term-inline-prompt">${esc(prompt)}</span>
-      <input class="term-inline-input" name="command" type="text" autocomplete="off" spellcheck="false" autocapitalize="off" enterkeyhint="send" aria-label="cmd">
+    <div class="terminal-output screen" data-term-out="${esc(termId)}">${body}</div>
+    <form class="term-inline-form terminal-form promptrow" data-term="${esc(termId)}">
+      <span class="term-inline-prompt prompt">${esc(prompt)}</span>
+      <input class="term-inline-input" id="cmd-${esc(termId)}" name="command" type="text" autocomplete="off" spellcheck="false" autocapitalize="off" enterkeyhint="send" aria-label="Команда">
     </form>
   </div>
 </div>`;
