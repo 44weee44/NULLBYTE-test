@@ -2175,6 +2175,54 @@ export function sendPlayerMail(state, { to, subject, body, attachmentId }) {
  * Verify mail attachments against active missions.
  * Success if: recipient is mission client (заказчик) AND file is SMS dump of mission target phone.
  */
+
+/** Complete phone lock missions when mail sent to client and target phone is blocked. */
+export function tryCompleteLockMissions(state, clientName) {
+  const name = String(clientName || '').trim().toLowerCase();
+  if (!name) return [];
+  const done = [];
+  const now = Date.now();
+  const items = state.missions?.items || [];
+  for (const m of items) {
+    const st = String(m.status || '');
+    if (!(st === 'accepted' || st === 'active' || st === 'in_progress')) continue;
+    if (String(m.task || '') !== 'lock' && !/блок/i.test(String(m.title || '') + String(m.objective || ''))) continue;
+    if (String(m.client || '').toLowerCase() !== name) continue;
+    const pid = m.phoneId || m.targetPhoneId || m.boundPhoneId;
+    if (!pid) continue;
+    const acc = state.phoneWorld?.access?.[pid] || state.phoneWorld?.access?.[String(pid).toUpperCase()];
+    const blocked = !!(acc && acc.blocked);
+    if (!blocked) continue;
+    // payout
+    m.status = 'completed';
+    m.completedAt = now;
+    const reward = Math.max(0, Number(m.reward) || 0);
+    if (!state.economy) state.economy = { credits: 0, transactions: [] };
+    state.economy.credits = (Number(state.economy.credits) || 0) + reward;
+    state.economy.transactions = state.economy.transactions || [];
+    state.economy.transactions.unshift({ id: 'tx_lock_' + now, type: 'income', amount: reward, reason: 'Контракт ' + m.id, at: now, note: m.title });
+    if (state.player) {
+      state.player.totalEarned = (Number(state.player.totalEarned) || 0) + reward;
+      state.player.contractsCompleted = (Number(state.player.contractsCompleted) || 0) + 1;
+      state.player.xp = (Number(state.player.xp) || 0) + (Number(m.xp) || 25);
+    }
+    if (!state.mail) state.mail = { messages: [], pendingDelivery: [] };
+    state.mail.messages.unshift({
+      id: 'mail_ok_' + now.toString(36),
+      direction: 'in',
+      from: m.client,
+      to: state.player?.nickname || 'operator',
+      subject: 'Контракт выполнен: ' + (m.title || m.id),
+      body: 'Телефон ' + pid + ' заблокирован. Перевод ' + reward + ' CR на ваш кошелёк подтверждён.\\n— ' + m.client,
+      at: now,
+      attachments: [],
+      status: 'unread'
+    });
+    done.push(m.id);
+  }
+  return done;
+}
+
 export function processMailDeliveries(state, now = Date.now()) {
   if (!state.mail?.pendingDelivery?.length) return [];
   const done = [];
@@ -2185,7 +2233,18 @@ export function processMailDeliveries(state, now = Date.now()) {
     if (d.checked) continue;
     d.checked = true;
 
-    const file = (state.computer?.files || []).find(f => f.id === d.fileId);
+    const file = d.fileId ? (state.computer?.files || []).find(f => f.id === d.fileId) : null;
+    // Lock contracts may arrive without attachment
+    const lockMissions = (state.missions?.items || []).filter(m => {
+      const st = String(m.status || '');
+      if (!(st === 'accepted' || st === 'active' || st === 'in_progress')) return false;
+      if (String(m.client || '').toLowerCase() !== String(d.to || '').toLowerCase()) return false;
+      return String(m.task || '') === 'lock' || /блок/i.test(String(m.title || ''));
+    });
+    if (!file && lockMissions.length) {
+      tryCompleteLockMissions(state, d.to);
+      continue;
+    }
     if (!file) {
       state.mail.messages.unshift({
         id: 'mail_fail_' + Date.now().toString(36),

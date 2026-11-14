@@ -5,7 +5,7 @@ import {
   processTimedEvents, bankStatus, bankRisk, attemptBankSimulation, saveEditorFile, validateNbs, runNbs, grantXp,
   recordHistory, addBookmark, idempotencyKey,
   PLUGIN_SHELLS, PLUGIN_ANIM, runPluginShellCommand, pluginShellBootLines, resolveSiteRef, savePlayerNamedFile, findFileByName, markServerModified,
-  isPluginLocked, isMissionVisible, xpThresholdForLevel, bindPhoneMissionTarget, ensureTrading, TRADING_TICKERS, tradingSparkline, listRegionPhones, scheduleMailDrop, processMailDrops, sendPlayerMail, processMailDeliveries } from './engine.js';
+  isPluginLocked, isMissionVisible, xpThresholdForLevel, bindPhoneMissionTarget, ensureTrading, TRADING_TICKERS, tradingSparkline, listRegionPhones, scheduleMailDrop, processMailDrops, sendPlayerMail, processMailDeliveries, tryCompleteLockMissions } from './engine.js';
 import { findPhone, phoneMessages, phoneGallery, phoneCallLog, phoneContacts, phoneFiles, lockPhone, unlockWithPin, isNetworkBanned, PROTECTION_RULES, registerBankFromMessages, PHONE_REGIONS, buildNetworkReport } from './phones.js';
 import { bankLogin, bankTransfer, getBankSession, searchNpcs, pluginDocs, touchNpc, NPC_POOL_SIZE } from './npc.js';
 import { extendedPluginDocs } from './operations.js';
@@ -17,7 +17,7 @@ const svg = {
   terminal:'<rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3m6 0h4"/>',
   darkshop:'<path d="M4 8h16l-1.5 13h-13L4 8Z"/><path d="M8 8V6a4 4 0 0 1 8 0v2"/>',
   browser:'<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>',
-  forge:'<path d="M4 5h16v14H4zM8 9l3 3-3 3m6 0h3"/>',
+  forge:'<path d="M5 16h14v2H5z"/><path d="M7 16V11h10v5"/><path d="M9 11V8h6v3"/><path d="M12 4v3m-2 0h4"/><path d="M16 6l2-2m-8 2L8 4"/>',
   map:'<path d="m3 6 6-3 6 3 6-3v15l-6 3-6-3-6 3V6Z"/><path d="M9 3v15m6-12v15"/>',
   mail:'<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m4 7 8 6 8-6"/>',
   blackwire:'<path d="M4 5h16v12H9l-5 4V5Z"/><path d="M8 9h8m-8 4h5"/>',
@@ -26,7 +26,8 @@ const svg = {
   bank:'<path d="m3 9 9-6 9 6M5 10v9m5-9v9m4-9v9m5-9v9M3 21h18"/>',
   phone:'<rect x="7" y="2" width="10" height="20" rx="2"/><path d="M10 18h4"/>',
   intel:'<circle cx="12" cy="12" r="3"/><path d="M12 3v3m0 12v3M3 12h3m12 0h3"/>',
-  computer:'<rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8m-4-4v4"/>'
+  computer:'<rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8m-4-4v4"/>',
+  fbi:'<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="7.5"/><path d="M12 4.5v1.5M12 18v1.5M4.5 12h1.5M18 12h1.5"/><path d="M8.5 15.5l3.5-8 3.5 8H8.5z"/><path d="M9.2 13.5h5.6"/>'
 };
 const APPS = [
   {id:'bank',title:'Aster Bank',path:'bank://account',ram:1,description:'Игровые кредиты'},
@@ -551,7 +552,8 @@ function onGlobalPointerMove(e){
   const win=state.opened.get(d.id);if(win){win.left=x;win.top=y;}
 }
 function onGlobalPointerUp(e){
-  if(state.drag&&(e.pointerId===undefined||e.pointerId===state.drag.pointerId)) state.drag=null;
+  if(state.drag&&(e.pointerId===undefined||e.pointerId===state.drag.pointerId)) document.querySelectorAll('.app-window.is-dragging').forEach(w=>w.classList.remove('is-dragging'));
+    state.drag=null;
 }
 if(!window.__nbDragGlobal){
   window.__nbDragGlobal=true;
@@ -570,7 +572,7 @@ function wireWindow(id,element) {
     if(e.target.closest('.window-controls')||state.opened.get(id)?.maximized||e.button!==0)return;
     if(e.target.closest('input,textarea,button'))return;
     const rect=element.getBoundingClientRect(),workspace=$('desktopWorkspace').getBoundingClientRect();
-    state.drag={id,pointerId:e.pointerId,dx:e.clientX-rect.left,dy:e.clientY-rect.top,workspace};
+    state.drag={id,pointerId:e.pointerId,dx:e.clientX-rect.left,dy:e.clientY-rect.top,workspace};element.classList.add('is-dragging');
     try{bar.setPointerCapture(e.pointerId);}catch{}focusWindow(id);e.preventDefault();
   });
   bar.addEventListener('pointermove',e=>{
@@ -578,7 +580,8 @@ function wireWindow(id,element) {
     const area=$('desktopWorkspace');const ww=element.offsetWidth,wh=element.offsetHeight;const x=Math.max(-ww+80,Math.min(area.clientWidth-60,e.clientX-d.workspace.left-d.dx)),y=Math.max(0,Math.min(area.clientHeight-40,e.clientY-d.workspace.top-d.dy));
     element.style.left=`${x}px`;element.style.top=`${y}px`;const w=state.opened.get(id);if(w){w.left=x;w.top=y;}
   });
-  const stop=e=>{if(state.drag?.id===id&&state.drag.pointerId===e.pointerId)state.drag=null;};
+  const stop=e=>{if(state.drag?.id===id&&state.drag.pointerId===e.pointerId)document.querySelectorAll('.app-window.is-dragging').forEach(w=>w.classList.remove('is-dragging'));
+    state.drag=null;};
   bar.addEventListener('pointerup',stop);bar.addEventListener('pointercancel',stop);bar.addEventListener('lostpointercapture',stop);
 
   // Resize from bottom-right handle
@@ -607,7 +610,8 @@ function wireWindow(id,element) {
     });
     const endRz=(e)=>{
       if(state.drag?.id===id && state.drag?.resize) {
-        state.drag=null;
+        document.querySelectorAll('.app-window.is-dragging').forEach(w=>w.classList.remove('is-dragging'));
+    state.drag=null;
         element.classList.remove('is-resizing');
       }
       try{stop(e);}catch{}
@@ -1315,42 +1319,50 @@ function renderMap(g) {
   const selected = state.mapSelected || null;
   const regions = PHONE_REGIONS || [];
   const net = g.phoneWorld?.network;
-  const bans = g.phoneWorld?.networkBanUntil || {};
   const now = Date.now();
-  // fixed positions for 6 regions
+  // Positions match city_map art (6 districts)
+  // top-left towers = midtown | top-right industrial = ironreach
+  // mid-left circular = bayshore | mid-right residential = oakridge
+  // bot-left campus = southgate | bot-right dark ruins = shadowline
   const pos = {
-    bayshore: { x: 18, y: 28 }, midtown: { x: 48, y: 22 }, ironreach: { x: 78, y: 30 },
-    southgate: { x: 22, y: 68 }, oakridge: { x: 52, y: 62 }, shadowline: { x: 78, y: 72 }
+    midtown:    { x: 28, y: 18 },
+    ironreach:  { x: 74, y: 20 },
+    bayshore:   { x: 26, y: 48 },
+    oakridge:   { x: 74, y: 50 },
+    southgate:  { x: 28, y: 78 },
+    shadowline: { x: 74, y: 80 }
   };
   const points = regions.map(r => {
     const p = pos[r.id] || { x: 50, y: 50 };
     const banned = isNetworkBanned(g, r.id);
-    return `<button type="button" class="map-point ${selected===r.id?'on':''} ${banned?'banned':''}" style="left:${p.x}%;top:${p.y}%" data-action="map-select" data-id="${esc(r.id)}"><span>${esc(r.name)}</span></button>`;
+    const onNet = net && net.regionId === r.id;
+    return `<button type="button" class="map-point ${selected===r.id?'on':''} ${banned?'banned':''} ${onNet?'linked':''}" style="left:${p.x}%;top:${p.y}%" data-action="map-select" data-id="${esc(r.id)}"><span class="map-label">${esc(r.name)}</span></button>`;
   }).join('');
   const detail = selected ? regions.find(r => r.id === selected) : null;
   let info = '<span class="muted">Выбери район сети</span>';
   if (detail) {
     const banned = isNetworkBanned(g, detail.id);
-    const vis = listRegionPhones(detail.id).length;
+    let vis = 0;
+    try { vis = listRegionPhones(detail.id).length; } catch (e) {}
     if (banned) {
       info = `<strong class="text-red">${esc(detail.name)}</strong>
-        <p class="text-red">НЕДОСТУПНО — бан сети</p>
-        <div class="kv"><span>Статус</span><b class="text-red">BANNED</b></div>
-        <div class="muted small">connect / scan / open недоступны до снятия бана</div>`;
+        <p class="text-red">НЕДОСТУПНО — бан сети. Connect / взлом закрыты.</p>`;
     } else {
       info = `<strong>${esc(detail.name)}</strong>
-        <div class="kv"><span>REGION_ID</span><b>${esc(detail.id)}</b></div>
-        <div class="kv"><span>NET_KEY</span><b>${esc(detail.netKey)}</b></div>
-        <div class="kv"><span>SSID</span><b>${esc(detail.ssid)}</b></div>
-        <div class="kv"><span>Видимых устройств</span><b>${vis}</b></div>
-        <div class="kv"><span>Сейчас в сети</span><b>${net?.regionId===detail.id?'CONNECTED':'—'}</b></div>`;
+        <div class="kv"><span>NET KEY</span><b>${esc(detail.netKey || '—')}</b></div>
+        <div class="kv"><span>SSID</span><b>${esc(detail.ssid || '—')}</b></div>
+        <div class="kv"><span>Видимые узлы</span><b>${vis}</b></div>
+        <p class="muted small">net-link → connect ${esc(detail.id)}</p>`;
     }
   }
-  return `<div class="app-heading"><div><div class="eyebrow">NULLATLAS</div><h2>Карта сетей</h2><p>Районы · NET_KEY · бан</p></div><span class="badge">${regions.length}</span></div>
-  <div class="map-canvas section-gap">${points}</div>
-  <div class="panel section-gap map-net-info">${info}
-  <div class="kv section-gap"><span>Активная сеть</span><b>${net ? esc(net.regionId)+' · '+esc(net.netKey||'') : 'OFFLINE'}</b></div>
-  </div>`;
+  return `<div class="app-heading"><div><div class="eyebrow">NULLATLAS</div><h2>Карта сетей</h2><p>Null-City · 6 регионов</p></div><span class="badge">LIVE</span></div>
+  <div class="map-wrap">
+    <div class="map-canvas">
+      <img class="map-art" src="city_map.jpg" alt="Null-City map" draggable="false">
+      <div class="map-overlay">${points}</div>
+    </div>
+  </div>
+  <div class="panel map-info section-gap">${info}</div>`;
 }
 
 function missionSteps(m, g) {
@@ -1473,7 +1485,7 @@ function scrollTerminalBottom(termId, force = false) {
 
 
 function resolvePluginId(rawId) {
-  const q = String(rawId || '').trim().toLowerCase();
+  const q = String(rawId || '').trim().toLowerCase().replace(/\s+/g, '-');
   if (!q) return null;
   const installed = (state.game?.computer?.installedPlugins) || [];
   const hitInst = installed.find(id => String(id).toLowerCase() === q);
@@ -1603,7 +1615,7 @@ async function runTerminalCommand(termId, raw) {
       if (locked) { status = '[LOCKED]  '; typ = 'error'; }
       else if (on) { status = '[ON]      '; typ = 'green'; }
       else { status = '[OFF]     '; typ = 'muted'; }
-      const idPad = (id + '                    ').slice(0, 18);
+      const idShow = String(id).replace(/-/g, ' '); const idPad = (idShow + '                    ').slice(0, 18);
       termAdd(termId, '│ ' + idPad + ' ' + status + ' ' + name, typ);
     });
     termAdd(termId, '└─ run <id> · locked = в разработке', 'muted');
@@ -2236,26 +2248,19 @@ function renderBank(g) {
     <p class="muted small section-gap">Чтобы войти в счёт NPC: Browser → asterbank.null → Вход (логин/пароль из SMS).</p>
   </div>
   ${status.locked?`<div class="notice danger section-gap"><b>БЛОКИРОВКА</b> ${humanLeft(status.remaining)}</div>`:''}
-  <div class="panel section-gap"><div class="panel-title"><span>ЭНДГЕЙМ</span></div>
-    <div class="kv"><span>Trace risk</span><b class="text-red">${Math.round(risk.traceChance*100)}%</b></div>
-    ${missing.length?`<div class="notice warning">${missing.map(esc).join(', ')}</div>`:''}
-    <button type="button" class="btn danger" data-action="bank-attempt" ${status.locked?'disabled':''}>РИСКОВАЯ ОПЕРАЦИЯ</button>
-  </div>
   <div class="panel section-gap"><div class="panel-title"><span>ИСТОРИЯ</span></div>
     ${tx.map(t=>`<div class="list-row"><div class="list-main"><strong>${esc(t.note||t.reason||t.type||'tx')}</strong><small>${new Date(t.at||0).toLocaleString('ru-RU')}</small></div><span>${fmt(t.amount)} CR</span></div>`).join('')||'<div class="muted">пусто</div>'}
   </div>`;
 }
 
 function renderFbi() {
-  return `<div class="app-heading"><div><div class="eyebrow">FEDERAL BUREAU OF INVESTIGATION</div><h2>FBI</h2><p>Закрытый операционный канал</p></div><span class="badge">LOCKED</span></div>
-  <div class="panel" style="text-align:center;padding:28px 16px">
-    <div style="font-size:28px;letter-spacing:.2em;opacity:.5;margin-bottom:12px">FBI</div>
-    <h3 style="margin:0 0 8px">Раздел недоступен</h3>
-    <p class="muted">Контракты федерального бюро появятся в будущем обновлении. Сейчас вкладка только резервирует место в системе.</p>
-    <div class="notice section-gap">Нет активных заданий · нет выплат · нет рейтинга</div>
+  return `<div class="app-heading"><div><div class="eyebrow">FEDERAL BUREAU OF INVESTIGATION</div><h2>FBI</h2><p>Закрытый канал · симуляция</p></div><span class="badge">LOCKED</span></div>
+  <div class="panel fbi-seal-panel">
+    <div class="fbi-seal">${icon('fbi','fbi-seal-ico')}</div>
+    <h3>ДОСТУП ОГРАНИЧЕН</h3>
+    <p class="muted">Операционный канал FBI в этой сборке закрыт. Следите за обновлениями.</p>
   </div>`;
 }
-
 
 function renderPhoneLab(g) {
   const pw = g.phoneWorld || {};
@@ -2400,34 +2405,46 @@ function renderIntel(g) {
 
 function renderHelp() {
   const g = state.game;
-  const sections = [
-    ['Обзор NULLBYTE', 'Одиночная симуляция хакерской жизни в вымышленном городе Нулл-Сити. Все сети, телефоны, серверы, почта и банки — игровые. Нет доступа к реальным устройствам, SMS, сайтам или API.'],
-    ['Что исследовать', '1) Региональные сети и телефоны (PHONE_ID). 2) Виртуальные сайты .null (сейчас web-цепочка на доработке). 3) Серверы и Intel. 4) Контракты BlackWire. 5) Случайные события мира.'],
-    ['Регионы и сеть', 'NullAtlas: 6 регионов (Бейшор-Хайтс, Мидтаун-Спайн, Айронрич, Саутгейт, Окридж, Шэдоулайн). Terminal: run net-link → list → connect <region_id>. Подключение только внутриигровое.'],
-    ['Анализ сети', 'run net-analyzer → scan (~анализ) → save <имя>. Полный отчёт содержит все ~550 PHONE_ID региона. Не обрезается. Ищи нужный ID сам (поиск в Files / IDE).'],
-    ['Телефоны PHONE_ID', 'Идентификатор формата PH-XXXX-0000. open через phone-access. После open открывается Phone Lab. SMS/звонки/галерея/lock/export — в приложении. disconnect только командой: phone-access → disconnect (или net-link → disconnect). Прогресс (файлы, discovered) сохраняется, сессия — нет.'],
-    ['Альтернатива: Mail Drop', 'run mail-drop → craft → save файл → N-Mail вложение NPC. Движок считает шанс/задержку открытия. При успехе в почте приходит PHONE_ID.'],
-    ['Плагины mobile', 'Бесплатно: net-link, net-analyzer, phone-access, mail-drop. Управление телефоном — Phone Lab. Платно: sms-bomber 40000 CR, bank-peek 100000 CR. Старые mobile-модули удалены.'],
-    ['Сайты (WIP)', 'Web-плагины в NULForge помечены «В доработке». Логика сохранена, run закрыт до отдельного чек-листа.'],
-    ['Terminal', 'help | plugins | run <id> | files | ls | cat | mission list | intel | map. В плагине: help, exit. Неизвестная команда — сразу ошибка без фейковой загрузки.'],
-    ['Files и IDE', 'Files — список и просмотр. IDE — вкладки, правка, поиск, сохранение виртуальных файлов. Нет доступа к файловой системе устройства.'],
-    ['N-Mail / BlackWire', 'Почта для писем и сдачи. Контракты по сайтам временно скрыты; phone-ветка расширяется.'],
-    ['События', 'Движок сам создаёт редкие события (инфра / социал / security / rare). Они меняют доступность и иногда кладут артефакт в Files. Пропуск не ломает основной прогресс.'],
-    ['Уровни и экономика', 'Уровень растёт только от XP, потолка практически нет. Гейт плагинов по уровню снят. CR — только игровые.'],
-    ['Сохранение', 'Telegram CloudStorage (чанки) + local fallback. Ник вводится один раз. migrateSave не затирает ops/phoneWorld/events.'],
-    ['Частые ошибки', '«Плагин на доработке» — web/legacy. «Сначала connect» — нет сети. «PHONE_ID не найден» — проверь формат из отчёта. Файлы смотри в Files, не жди автоподсветки ID.']
-  ];
-  const plugs = (typeof PLUGINS !== 'undefined' ? PLUGINS : []).map(p => {
-    const lock = typeof isPluginLocked === 'function' && isPluginLocked(p.id);
-    return `<div class="list-row"><div class="list-main"><strong>${esc(p.name)}</strong><small>${esc(p.category)} · ${lock ? 'WIP' : 'OK'} · ${esc(p.description)}</small></div>
-      <button class="btn tiny ghost" data-action="plugin-docs" data-id="${p.id}">ПОДРОБНЕЕ</button></div>`;
-  }).join('');
-  const ev = (g?.events?.active || []).map(e => `<div class="list-row"><div class="list-main"><strong>${esc(e.title)}</strong><small>${esc(e.body)}</small></div></div>`).join('') || '<div class="muted small">Активных событий нет</div>';
-  return `<div class="app-heading"><div><div class="eyebrow">NULLBYTE KNOWLEDGE BASE</div><h2>Help / Docs</h2><p>Полное руководство: что исследовать, как брать ID, какие инструменты.</p></div><span class="badge green">RU</span></div>
-  <div class="notice warning">Все термины «взлом», «сеть», «SMS» — только симуляция.</div>
-  ${sections.map((s,i)=>`<div class="panel section-gap"><div class="panel-title"><span>${String(i+1).padStart(2,'0')} / ${esc(s[0].toUpperCase())}</span></div><div class="muted small" style="line-height:1.75">${esc(s[1])}</div></div>`).join('')}
-  <div class="panel section-gap"><div class="panel-title"><span>ПЛАГИНЫ</span></div><div class="list">${plugs}</div></div>
-  <div class="panel section-gap"><div class="panel-title"><span>СОБЫТИЯ СЕЙЧАС</span></div>${ev}</div>`;
+  const installed = new Set((g.computer?.installedPlugins) || []);
+  const all = (typeof PLUGINS !== 'undefined' && Array.isArray(PLUGINS)) ? PLUGINS : [];
+  const rows = all.map(p => {
+    const locked = typeof isPluginLocked === 'function' && isPluginLocked(p.id);
+    const on = installed.has(p.id);
+    let status, cls;
+    if (locked) { status = 'В РАЗРАБОТКЕ'; cls = 'text-red'; }
+    else if (on) { status = 'ДОСТУПЕН'; cls = 'text-green'; }
+    else if ((p.price || 0) > 0) { status = 'НЕ КУПЛЕН · ' + fmt(p.price) + ' CR'; cls = 'text-amber'; }
+    else { status = 'НЕ УСТАНОВЛЕН'; cls = 'muted'; }
+    const idShow = String(p.id).replace(/-/g, ' ');
+    return `<div class="list-row"><div class="list-main"><strong>${esc(idShow)}</strong><small>${esc(p.name)} · ${esc(p.category || '')}</small></div><span class="${cls}">${esc(status)}</span></div>`;
+  }).join('') || '<div class="muted">Нет данных о плагинах</div>';
+
+  return `<div class="app-heading"><div><div class="eyebrow">DOCS</div><h2>Help</h2><p>NULLBYTE — игровая симуляция. Всё вымышленное.</p></div><span class="badge">v1</span></div>
+
+  <div class="panel section-gap">
+    <div class="panel-title"><span>ПЛАГИНЫ</span><small>статус</small></div>
+    <p class="muted small">В терминале: <b>plugins</b> · запуск <b>run id</b> (можно с пробелами: run net link)</p>
+    <div class="list">${rows}</div>
+  </div>
+
+  <div class="panel section-gap">
+    <div class="panel-title"><span>БЫСТРЫЙ СТАРТ</span></div>
+    <ol class="help-steps">
+      <li>Terminal → <code>run net link</code> → <code>connect &lt;region&gt;</code></li>
+      <li><code>run net analyzer</code> → <code>scan</code> → имя файла отчёта</li>
+      <li><code>run phone access</code> → <code>open PHONE_ID</code> → <code>attack</code> → PIN в Phone Lab</li>
+      <li>FILES / SMS / contacts → скачать → N-Mail заказчику</li>
+      <li>Блок телефона: <code>block</code> в phone access → письмо заказчику <b>без файла</b></li>
+    </ol>
+  </div>
+
+  <div class="panel section-gap">
+    <div class="panel-title"><span>ПРИЛОЖЕНИЯ</span></div>
+    <div class="kv"><span>Phone Lab</span><b>сессия телефона после open/attack</b></div>
+    <div class="kv"><span>N-Mail</span><b>сдача заданий и переписка с NPC</b></div>
+    <div class="kv"><span>NullAtlas</span><b>регионы сети</b></div>
+    <div class="kv"><span>Aster Bank</span><b>кошелёк · вход в NPC-счета на asterbank.null</b></div>
+  </div>`;
 }
 
 function highlightNbs(source) {
@@ -2548,8 +2565,27 @@ function runNbsAction(action) {
   }
 }
 
-function handleAction(action,el) {
+const _ptrTrack = { x:0, y:0, t:0 };
+document.addEventListener('pointerdown', e => {
+  _ptrTrack.x = e.clientX; _ptrTrack.y = e.clientY; _ptrTrack.t = Date.now();
+}, true);
+
+function isIntentionalClick(el, ev) {
+  if (!el || !el.classList || !el.classList.contains('start-tile')) return true;
+  const dt = Date.now() - (_ptrTrack.t || 0);
+  if (dt > 650) return false;
+  if (ev && typeof ev.clientX === 'number') {
+    const dx = Math.abs(ev.clientX - _ptrTrack.x);
+    const dy = Math.abs(ev.clientY - _ptrTrack.y);
+    if (dx > 14 || dy > 14) return false; // was a scroll / drag
+  }
+  return true;
+}
+
+function handleAction(action,el,ev) {
   if(action==='noop') return;
+  if(action==='browser-tab' && el?.dataset?.site && !isIntentionalClick(el,ev)) return;
+
   const id=el.dataset.id,app=el.dataset.app,site=el.dataset.site,part=el.dataset.part;
   switch(action){
     case 'bank-npc-login':{
@@ -3017,6 +3053,14 @@ function handleAction(action,el) {
         if(!r || !r.ok){ toast((r && r.reason) || 'Ошибка отправки','error'); break; }
         if(!state.game.mail) state.game.mail = { messages: [], pendingDelivery: [] };
         toast(r.hasAttachment ? 'Письмо с вложением отправлено' : 'Письмо отправлено → ' + to, 'success');
+        // Block-missions: no attachment required — verify phone blocked
+        try {
+          const paid = tryCompleteLockMissions(state.game, to);
+          if (paid && paid.length) {
+            toast('Задание (блок) выполнено · +CR', 'success');
+            refreshOpenApps(['mail','blackwire','profile','bank']);
+          }
+        } catch (e) { console.warn(e); }
         state.mailCompose = null;
         state.mailView = null;
         scheduleSave();
@@ -3066,24 +3110,70 @@ function handleAction(action,el) {
   }
 }
 
+
+/** UI click SFX — only for interactive targets, deduped */
+const SFX = {
+  click: null,
+  lastAt: 0,
+  lastKey: '',
+  primed: false
+};
+function ensureClickSfx() {
+  if (SFX.click) return SFX.click;
+  try {
+    const a = new Audio('nullbyte_click_main.wav');
+    a.preload = 'auto';
+    a.volume = 0.55;
+    SFX.click = a;
+  } catch (e) { SFX.click = null; }
+  return SFX.click;
+}
+function playUiClick(sourceEl) {
+  // empty desktop / wallpaper / pure window background — no sound
+  if (!sourceEl) return;
+  const tag = (sourceEl.tagName || '').toLowerCase();
+  const interactive = sourceEl.closest(
+    'button, [data-action], a, .desktop-icon, .taskbar-app, .start-item, .map-point, .start-tile, .mail-item, .list-row[data-action], .ide-tab, .nb-tab, .window-controls button, .pin-btn, input[type="submit"], .term-kb-btn'
+  );
+  if (!interactive) return;
+  // ignore pure text inputs / textarea focus clicks (no click feel needed, avoids noise while typing)
+  if (sourceEl.closest('input:not([type="button"]):not([type="submit"]), textarea, select')) {
+    // allow buttons inside forms only
+    if (!sourceEl.closest('button, [data-action]')) return;
+  }
+  const now = performance.now();
+  const key = (interactive.dataset?.action || interactive.className || '') + '|' + (interactive.dataset?.app || interactive.dataset?.id || '');
+  // dedupe double pointerup+click and rapid repeats
+  if (now - SFX.lastAt < 90 && SFX.lastKey === key) return;
+  if (now - SFX.lastAt < 40) return;
+  SFX.lastAt = now;
+  SFX.lastKey = key;
+  const audio = ensureClickSfx();
+  if (!audio) return;
+  try {
+    audio.pause();
+    audio.currentTime = 0;
+    const p = audio.play();
+    if (p && p.catch) p.catch(() => {});
+  } catch (e) {}
+}
+
 function onUiAction(event){
   const button=event.target.closest('[data-action]');
   if(!button)return;
-  // Prefer the innermost action target (e.g. tab close over tab activate).
   const now=Date.now();
   if(button._nbActAt && now-button._nbActAt<350)return;
   button._nbActAt=now;
-  // Don't preventDefault on inputs; only on actionable chrome controls
+  playUiClick(button);
   if(!event.target.closest('input,textarea,select')) event.preventDefault();
   try{
-    handleAction(button.dataset.action,button);
+    handleAction(button.dataset.action,button,event);
   }catch(err){
     console.error('[NULLBYTE] action',button.dataset.action,err);
     toast(String(err.message||err),'error');
   }
 }
 document.addEventListener('click',onUiAction);
-document.addEventListener('pointerup',onUiAction);
 
 document.addEventListener('pointerdown',event=>{
   const editable=event.target.closest('input,textarea,select,[contenteditable="true"]');
