@@ -1212,3 +1212,11 @@ html,body{background:#0a0a0a!important;font-size:12px!important}
 .map-point.banned .map-label{border-color:#a33;color:#f0a0a0;background:rgba(40,10,10,.85)}
 .map-point:active .map-label{transform:scale(.97)}
 .map-info{font-size:12px}
+
+.list-actions{position:relative;z-index:2;display:flex;flex-wrap:wrap;gap:6px;align-items:center;pointer-events:auto}
+.list-actions .btn{pointer-events:auto;position:relative;z-index:3}
+.plugin-row{align-items:flex-start}
+.modal-backdrop{z-index:500!important}
+.modal-body{color:#91a3af;font-size:12px;line-height:1.55;max-height:min(60vh,420px);overflow:auto}
+.modal-body p{margin:0 0 10px}
+.modal-body .notice{margin-top:10px}

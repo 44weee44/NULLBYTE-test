@@ -17,7 +17,7 @@ const svg = {
   terminal:'<rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3m6 0h4"/>',
   darkshop:'<path d="M4 8h16l-1.5 13h-13L4 8Z"/><path d="M8 8V6a4 4 0 0 1 8 0v2"/>',
   browser:'<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>',
-  forge:'<path d="M5 16h14v2H5z"/><path d="M7 16V11h10v5"/><path d="M9 11V8h6v3"/><path d="M12 4v3m-2 0h4"/><path d="M16 6l2-2m-8 2L8 4"/>',
+  forge:'<path d="M4 7h16v3H4z"/><path d="M6 10v8h12v-8"/><path d="M9 13h6M9 16h6"/><path d="M12 4v3"/>',
   map:'<path d="m3 6 6-3 6 3 6-3v15l-6 3-6-3-6 3V6Z"/><path d="M9 3v15m6-12v15"/>',
   mail:'<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m4 7 8 6 8-6"/>',
   blackwire:'<path d="M4 5h16v12H9l-5 4V5Z"/><path d="M8 9h8m-8 4h5"/>',
@@ -27,7 +27,7 @@ const svg = {
   phone:'<rect x="7" y="2" width="10" height="20" rx="2"/><path d="M10 18h4"/>',
   intel:'<circle cx="12" cy="12" r="3"/><path d="M12 3v3m0 12v3M3 12h3m12 0h3"/>',
   computer:'<rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8m-4-4v4"/>',
-  fbi:'<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="7.5"/><path d="M12 4.5v1.5M12 18v1.5M4.5 12h1.5M18 12h1.5"/><path d="M8.5 15.5l3.5-8 3.5 8H8.5z"/><path d="M9.2 13.5h5.6"/>'
+  fbi:'<circle cx="12" cy="12" r="9.5"/><circle cx="12" cy="12" r="7"/><path d="M12 5v2.2M12 16.8V19M5 12h2.2M16.8 12H19"/><path d="M9 15.2L12 7.5l3 7.7H9z"/><path d="M9.5 13.2h5"/>'
 };
 const APPS = [
   {id:'bank',title:'Aster Bank',path:'bank://account',ram:1,description:'Игровые кредиты'},
@@ -129,12 +129,38 @@ function renderTaskbar() {
   refreshSystem();
 }
 function showModal({title,eyebrow='NULLBYTE SYSTEM',body='',fields='',confirm='ПРОДОЛЖИТЬ',cancel='ОТМЕНА',danger=false,onConfirm=null}) {
-  const modal=$('modalCard');state.modalConfirm=onConfirm;
-  modal.innerHTML=`<div class="modal-eyebrow">${esc(eyebrow)}</div><h2 id="modalTitle">${esc(title)}</h2>${body?`<p>${body}</p>`:''}${fields}<div class="modal-actions">${cancel?`<button type="button" class="btn ghost" data-action="modal-cancel">${esc(cancel)}</button>`:''}<button type="button" class="btn ${danger?'danger':'primary'}" data-action="modal-confirm">${esc(confirm)}</button></div>`;
-  $('modalBackdrop').hidden=false;
-  const first=modal.querySelector('input,button');first?.focus();
+  const modal=$('modalCard');
+  const backdrop=$('modalBackdrop');
+  if (!modal || !backdrop) {
+    console.error('[NULLBYTE] modal DOM missing');
+    toast(String(title||'info'), 'info');
+    return;
+  }
+  state.modalConfirm = onConfirm;
+  modal.innerHTML = `
+    <div class="modal-eyebrow">${esc(eyebrow)}</div>
+    <h2 id="modalTitle">${esc(title)}</h2>
+    ${body ? `<div class="modal-body">${body}</div>` : ''}
+    ${fields || ''}
+    <div class="modal-actions">
+      ${cancel ? `<button type="button" class="btn ghost" data-action="modal-cancel">${esc(cancel)}</button>` : ''}
+      <button type="button" class="btn ${danger?'danger':'primary'}" data-action="modal-confirm">${esc(confirm)}</button>
+    </div>`;
+  backdrop.hidden = false;
+  backdrop.removeAttribute('hidden');
+  backdrop.style.display = 'grid';
+  backdrop.style.zIndex = '500';
+  try { modal.querySelector('button,input')?.focus(); } catch (e) {}
 }
-function closeModal(){ $('modalBackdrop').hidden=true;state.modalConfirm=null; }
+function closeModal(){
+  const backdrop=$('modalBackdrop');
+  if (backdrop) {
+    backdrop.hidden = true;
+    backdrop.setAttribute('hidden','');
+    backdrop.style.display = '';
+  }
+  state.modalConfirm=null;
+}
 function confirm(title,body,onConfirm,{danger=false,confirmText='ПОДТВЕРДИТЬ'}={}) {showModal({title,body,confirm:confirmText,danger,onConfirm});}
 function finishModal() {const fn=state.modalConfirm;if(fn){const result=fn();if(result===false)return;}closeModal();}
 
@@ -915,7 +941,17 @@ function renderPluginCard(g,p) {
       : !space ? '<span class="badge red">NO SPACE</span>'
       : bankLocked ? '<span class="badge red">BANK LOCK</span>'
       : `<button class="btn tiny" data-action="install-plugin" data-id="${p.id}" title="${esc(blocker)}">${p.price?'УСТАНОВИТЬ · '+fmt(p.price):'ДОБАВИТЬ'}</button>`;
-  return `<div class="list-row"><div class="list-main"><strong>${esc(p.name)} <span class="muted">v${esc(p.version)}</span></strong><small>${esc(p.category)} · ${esc(p.description)}<br>RAM ${p.ram} GB · ${p.storage} MB · ОС ${(p.minOs||1)}.0+ · ${p.cooldown?`${p.cooldown/1000} сек cooldown`:'без cooldown'}${wip?' · <b>WIP</b>':''}</small><small class="text-blue">${wip?'Закрыто до нового чек-листа. Логика сохранена.':esc(p.effect)}</small></div><div class="list-actions"><button class="btn tiny ghost" data-action="plugin-docs" data-id="${p.id}">ПОДРОБНЕЕ</button>${status}</div></div>`;
+  return `<div class="list-row plugin-row">
+    <div class="list-main">
+      <strong>${esc(p.name)} <span class="muted">v${esc(p.version)}</span></strong>
+      <small>${esc(p.category)} · ${esc(p.description)}<br>RAM ${p.ram} GB · ${p.storage} MB · ОС ${(p.minOs||1)}.0+${wip?' · <b>WIP</b>':''}</small>
+      <small class="text-blue">${wip?'Закрыто до нового чек-листа.':esc(p.effect)}</small>
+    </div>
+    <div class="list-actions">
+      <button type="button" class="btn tiny ghost" data-action="plugin-docs" data-id="${esc(p.id)}">ПОДРОБНЕЕ</button>
+      ${status}
+    </div>
+  </div>`;
 }
 function renderForge(g) {
   const categories=[...new Set(PLUGINS.map(p=>p.category))];
@@ -2623,20 +2659,33 @@ function handleAction(action,el,ev) {
     }
     case 'bank-logout-skip':state.bankSessionId=null;toast('Сессия закрыта');refreshOpenApps();break;
     case 'plugin-docs':{
-      const docs={...pluginDocs(),...extendedPluginDocs()}[id]||{...pluginDocs(),...extendedPluginDocs()}[el.dataset.plugin];
-      const p=docs||{title:id,role:'Нет описания',steps:[],inputs:'—',outputs:'—',next:[]};
-      const plug = getPlugin(id) || PLUGINS.find(x=>x.id===id);
-      showModal({title:p.title||'Плагин',eyebrow:'ПОДРОБНЕЕ О ПЛАГИНЕ',body:`
-        <p><b>ID:</b> <code>${esc(id)}</code> · <b>Версия:</b> ${esc(plug?.version||'—')} · <b>Категория:</b> ${esc(plug?.category||'—')}</p>
-        <p><b>Назначение:</b> ${esc(p.role)}</p>
-        <p><b>Что делает / не делает:</b> ${esc(plug?.description||p.role)} ${esc(p.limits||'')}</p>
-        <p><b>Цена:</b> ${plug?.price?fmt(plug.price)+' CR':'бесплатно'} · <b>RAM:</b> ${plug?.ram||'—'} · <b>Storage:</b> ${plug?.storage||'—'} MB</p>
-        <p><b>Вход:</b> ${esc(p.inputs)}</p>
-        <p><b>Выход:</b> ${esc(p.outputs)}</p>
-        <p><b>Шаги:</b></p><ol style="margin:6px 0 0 18px">${(p.steps||[]).map(s=>`<li>${esc(s)}</li>`).join('')}</ol>
-        <p><b>Далее:</b> ${(p.next||[]).map(esc).join(', ')||'—'}</p>
-        <p class="muted small"><b>Ограничения:</b> ${esc(p.limits||'—')}</p>
-        ${typeof isPluginLocked==='function'&&isPluginLocked(id)?'<p class="notice warning">Статус: НА ДОРАБОТКЕ — запуск и установка закрыты.</p>':''}`,confirm:'ЗАКРЫТЬ',cancel:'',onConfirm:()=>{}});
+      const pid = id || el.dataset.id || el.dataset.plugin || '';
+      let docs = {};
+      try { docs = { ...(pluginDocs()||{}), ...(extendedPluginDocs()||{}) }; } catch (e) { docs = {}; }
+      const p = docs[pid] || { title: pid, role: 'Описание появится позже', steps: [], inputs: '—', outputs: '—', next: [], limits: '—' };
+      const plug = (typeof getPlugin==='function' && getPlugin(pid)) || (PLUGINS||[]).find(x=>x.id===pid) || {};
+      const locked = typeof isPluginLocked==='function' && isPluginLocked(pid);
+      const steps = (p.steps && p.steps.length)
+        ? p.steps
+        : ['Открой Terminal', 'plugins — список', 'run ' + String(pid).replace(/-/g,' '), 'Следуй help внутри плагина'];
+      showModal({
+        title: p.title || plug.name || pid || 'Плагин',
+        eyebrow: 'ПОДРОБНЕЕ О ПЛАГИНЕ',
+        body: `
+          <p><b>ID:</b> <code>${esc(pid)}</code> · <b>v</b>${esc(plug.version||'—')} · <b>${esc(plug.category||'—')}</b></p>
+          <p><b>Назначение:</b> ${esc(p.role || plug.description || '—')}</p>
+          <p><b>Эффект:</b> ${esc(plug.effect || '—')}</p>
+          <p><b>Цена:</b> ${plug.price ? fmt(plug.price)+' CR' : 'бесплатно'} · RAM ${plug.ram||'—'} · ${plug.storage||'—'} MB</p>
+          <p><b>Вход:</b> ${esc(p.inputs||'—')} · <b>Выход:</b> ${esc(p.outputs||'—')}</p>
+          <p><b>Шаги:</b></p>
+          <ol style="margin:6px 0 0 18px">${steps.map(s=>`<li>${esc(s)}</li>`).join('')}</ol>
+          <p class="muted small"><b>Далее:</b> ${(p.next||[]).map(esc).join(', ')||'—'} · <b>Лимиты:</b> ${esc(p.limits||'—')}</p>
+          ${locked ? '<p class="notice warning">Статус: НА ДОРАБОТКЕ — run закрыт.</p>' : '<p class="notice">Можно запускать из Terminal, если установлен.</p>'}
+        `,
+        confirm: 'ЗАКРЫТЬ',
+        cancel: '',
+        onConfirm: () => closeModal()
+      });
       break;
     }
     case 'copy-text':{
@@ -2914,9 +2963,26 @@ function handleAction(action,el,ev) {
       }
       break;
     }
+    case 'mission-detail':
     case 'mission-details':{
-      state.selectedMissionId=id;
-      if(!state.opened.has('blackwire'))openApp('blackwire');
+      const mid = id || el.dataset.id;
+      state.selectedMissionId = mid;
+      try {
+        const m = (state.game.missions?.items||[]).find(x=>x.id===mid);
+        if (m) {
+          showModal({
+            title: m.title || mid,
+            eyebrow: 'КОНТРАКТ',
+            body: `<p><b>Заказчик:</b> ${esc(m.client||'—')}</p>
+              <p><b>Задача:</b> ${esc(m.objective||m.task||'—')}</p>
+              <p><b>Регион:</b> ${esc(m.regionId||'—')} · <b>Телефон:</b> ${esc(m.phoneId||m.boundPhoneId||'—')}</p>
+              <p><b>Награда:</b> ${fmt(m.reward||0)} CR · XP ${m.xp||0}</p>
+              <p class="muted">${esc(m.hint||'')}</p>`,
+            confirm: 'ЗАКРЫТЬ', cancel: '', onConfirm: () => closeModal()
+          });
+        }
+      } catch (e) { console.error(e); }
+      if(!state.opened.has('blackwire')) openApp('blackwire');
       else renderWindow('blackwire');
       break;
     }
@@ -3111,60 +3177,12 @@ function handleAction(action,el,ev) {
 }
 
 
-/** UI click SFX — only for interactive targets, deduped */
-const SFX = {
-  click: null,
-  lastAt: 0,
-  lastKey: '',
-  primed: false
-};
-function ensureClickSfx() {
-  if (SFX.click) return SFX.click;
-  try {
-    const a = new Audio('nullbyte_click_main.wav');
-    a.preload = 'auto';
-    a.volume = 0.55;
-    SFX.click = a;
-  } catch (e) { SFX.click = null; }
-  return SFX.click;
-}
-function playUiClick(sourceEl) {
-  // empty desktop / wallpaper / pure window background — no sound
-  if (!sourceEl) return;
-  const tag = (sourceEl.tagName || '').toLowerCase();
-  const interactive = sourceEl.closest(
-    'button, [data-action], a, .desktop-icon, .taskbar-app, .start-item, .map-point, .start-tile, .mail-item, .list-row[data-action], .ide-tab, .nb-tab, .window-controls button, .pin-btn, input[type="submit"], .term-kb-btn'
-  );
-  if (!interactive) return;
-  // ignore pure text inputs / textarea focus clicks (no click feel needed, avoids noise while typing)
-  if (sourceEl.closest('input:not([type="button"]):not([type="submit"]), textarea, select')) {
-    // allow buttons inside forms only
-    if (!sourceEl.closest('button, [data-action]')) return;
-  }
-  const now = performance.now();
-  const key = (interactive.dataset?.action || interactive.className || '') + '|' + (interactive.dataset?.app || interactive.dataset?.id || '');
-  // dedupe double pointerup+click and rapid repeats
-  if (now - SFX.lastAt < 90 && SFX.lastKey === key) return;
-  if (now - SFX.lastAt < 40) return;
-  SFX.lastAt = now;
-  SFX.lastKey = key;
-  const audio = ensureClickSfx();
-  if (!audio) return;
-  try {
-    audio.pause();
-    audio.currentTime = 0;
-    const p = audio.play();
-    if (p && p.catch) p.catch(() => {});
-  } catch (e) {}
-}
-
 function onUiAction(event){
   const button=event.target.closest('[data-action]');
   if(!button)return;
   const now=Date.now();
   if(button._nbActAt && now-button._nbActAt<350)return;
   button._nbActAt=now;
-  playUiClick(button);
   if(!event.target.closest('input,textarea,select')) event.preventDefault();
   try{
     handleAction(button.dataset.action,button,event);
