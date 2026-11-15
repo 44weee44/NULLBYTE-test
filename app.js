@@ -162,7 +162,16 @@ function closeModal(){
   state.modalConfirm=null;
 }
 function confirm(title,body,onConfirm,{danger=false,confirmText='ПОДТВЕРДИТЬ'}={}) {showModal({title,body,confirm:confirmText,danger,onConfirm});}
-function finishModal() {const fn=state.modalConfirm;if(fn){const result=fn();if(result===false)return;}closeModal();}
+function finishModal() {
+  try {
+    const fn = state.modalConfirm;
+    if (typeof fn === 'function') {
+      const result = fn();
+      if (result === false) return;
+    }
+  } catch (e) { console.error(e); }
+  closeModal();
+}
 
 function boot() {
   const lines = [
@@ -1521,14 +1530,23 @@ function scrollTerminalBottom(termId, force = false) {
 
 
 function resolvePluginId(rawId) {
-  const q = String(rawId || '').trim().toLowerCase().replace(/\s+/g, '-');
-  if (!q) return null;
+  const raw = String(rawId || '').trim().toLowerCase();
+  if (!raw) return null;
+  const q = raw.replace(/\s+/g, '-');
+  const qSp = raw.replace(/-/g, ' ');
   const installed = (state.game?.computer?.installedPlugins) || [];
-  const hitInst = installed.find(id => String(id).toLowerCase() === q);
-  if (hitInst) return hitInst;
+  let hit = installed.find(id => {
+    const idL = String(id).toLowerCase();
+    return idL === q || idL === raw || idL.replace(/-/g, ' ') === qSp;
+  });
+  if (hit) return hit;
   const all = (typeof PLUGINS !== 'undefined' && Array.isArray(PLUGINS)) ? PLUGINS : [];
-  const hit = all.find(p => String(p.id).toLowerCase() === q || String(p.name || '').toLowerCase() === q);
-  return hit ? hit.id : null;
+  const p = all.find(pl => {
+    const idL = String(pl.id).toLowerCase();
+    const nameL = String(pl.name || '').toLowerCase();
+    return idL === q || idL === raw || idL.replace(/-/g, ' ') === qSp || nameL === raw || nameL === qSp;
+  });
+  return p ? p.id : null;
 }
 
 async function runTerminalCommand(termId, raw) {
@@ -1540,9 +1558,10 @@ async function runTerminalCommand(termId, raw) {
   term.scrollPin = true;
   if (term.busy) { termAdd(termId, 'busy…', 'error'); return; }
 
-  const parts = cmd.split(/\s+/);
+  const parts = cmd.split(/\s+/).filter(Boolean);
   const c0 = (parts[0] || '').toLowerCase();
   const arg1 = parts[1] || '';
+  const argRest = parts.slice(1).join(' '); // "net link" / "phone access"
 
   // Plugin shell
   if (term.plugin) {
@@ -1664,13 +1683,14 @@ async function runTerminalCommand(termId, raw) {
     return;
   }
   if (c0 === 'run' || c0 === 'exec') {
-    if (!arg1) { termAdd(termId, 'usage: run <plugin-id>', 'error'); return; }
-    const pid = resolvePluginId(arg1) || arg1;
+    if (!argRest) { termAdd(termId, 'usage: run <plugin-id>   (пример: run net link)', 'error'); return; }
+    const realId = resolvePluginId(argRest) || resolvePluginId(arg1) || argRest.replace(/\s+/g, '-').toLowerCase();
     const installedList = state.game.computer.installedPlugins || [];
-    const installed = installedList.some(id => String(id).toLowerCase() === String(pid).toLowerCase())
-      || installedList.some(id => String(id).toLowerCase() === String(arg1).toLowerCase());
-    const realId = resolvePluginId(arg1) || installedList.find(id => String(id).toLowerCase() === String(arg1).toLowerCase()) || pid;
-    if (!installed) { termAdd(termId, 'not installed: ' + arg1 + ' (plugins)', 'error'); return; }
+    const installed = installedList.some(id => String(id).toLowerCase() === String(realId).toLowerCase());
+    if (!installed) {
+      termAdd(termId, 'not installed: ' + argRest + '  → plugins', 'error');
+      return;
+    }
     if (typeof isPluginLocked === 'function' && isPluginLocked(realId)) {
       termAdd(termId, 'plugin locked / в разработке: ' + realId, 'error'); return;
     }
@@ -2607,13 +2627,15 @@ document.addEventListener('pointerdown', e => {
 }, true);
 
 function isIntentionalClick(el, ev) {
+  // only guards dense browser start tiles; everything else always OK
   if (!el || !el.classList || !el.classList.contains('start-tile')) return true;
+  if (!_ptrTrack || !_ptrTrack.t) return true;
   const dt = Date.now() - (_ptrTrack.t || 0);
-  if (dt > 650) return false;
+  if (dt > 900) return true; // allow rather than block
   if (ev && typeof ev.clientX === 'number') {
     const dx = Math.abs(ev.clientX - _ptrTrack.x);
     const dy = Math.abs(ev.clientY - _ptrTrack.y);
-    if (dx > 14 || dy > 14) return false; // was a scroll / drag
+    if (dx > 24 || dy > 24) return false;
   }
   return true;
 }
@@ -3178,20 +3200,28 @@ function handleAction(action,el,ev) {
 
 
 function onUiAction(event){
-  const button=event.target.closest('[data-action]');
-  if(!button)return;
-  const now=Date.now();
-  if(button._nbActAt && now-button._nbActAt<350)return;
-  button._nbActAt=now;
-  if(!event.target.closest('input,textarea,select')) event.preventDefault();
-  try{
-    handleAction(button.dataset.action,button,event);
-  }catch(err){
-    console.error('[NULLBYTE] action',button.dataset.action,err);
-    toast(String(err.message||err),'error');
+  try {
+    const button = event.target.closest && event.target.closest('[data-action]');
+    if (!button) return;
+    // ignore right-click
+    if (event.button != null && event.button !== 0) return;
+    const action = button.dataset.action;
+    if (!action) return;
+    const now = Date.now();
+    // tighter debounce only for same action on same node
+    const key = action + '|' + (button.dataset.id || button.dataset.app || '');
+    if (button._nbActKey === key && button._nbActAt && now - button._nbActAt < 220) return;
+    button._nbActAt = now;
+    button._nbActKey = key;
+    handleAction(action, button, event);
+  } catch (err) {
+    console.error('[NULLBYTE] action', err);
+    try { toast(String(err.message || err), 'error'); } catch (e) {}
   }
 }
-document.addEventListener('click',onUiAction);
+document.addEventListener('click', onUiAction, false);
+// iOS: some controls only fire touch end reliably — use click which iOS synthesizes
+
 
 document.addEventListener('pointerdown',event=>{
   const editable=event.target.closest('input,textarea,select,[contenteditable="true"]');

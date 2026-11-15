@@ -1220,3 +1220,29 @@ html,body{background:#0a0a0a!important;font-size:12px!important}
 .modal-body{color:#91a3af;font-size:12px;line-height:1.55;max-height:min(60vh,420px);overflow:auto}
 .modal-body p{margin:0 0 10px}
 .modal-body .notice{margin-top:10px}
+
+/* window titles readable */
+.window-bar{
+  height:36px!important;
+  min-height:36px!important;
+  gap:8px!important;
+  padding:0 8px 0 10px!important;
+}
+.window-title{
+  font-size:13px!important;
+  font-weight:600!important;
+  color:#e8eef4!important;
+  line-height:1.2!important;
+  max-width:none!important;
+  flex:1 1 auto!important;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.window-path{
+  font-size:10px!important;
+  max-width:36%!important;
+  flex:0 1 auto!important;
+}
+.window-app-mark{flex:0 0 auto}
+.window-controls{flex:0 0 auto}
