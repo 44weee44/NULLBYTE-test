@@ -1987,7 +1987,6 @@ export function phoneSeed(stateOrSeed = 'nb') {
 export function bindPhoneMissionTarget(mission, seedRoot = 'nb') {
   if (!mission || !(String(mission.id || '').startsWith('phone-'))) return mission;
   const regionId = mission.regionId || 'bayshore';
-  const seed = phoneSeed(seedRoot);
   try {
     const list = listRegionPhones(regionId);
     if (!list.length) return mission;
@@ -1995,31 +1994,44 @@ export function bindPhoneMissionTarget(mission, seedRoot = 'nb') {
     const s = String(mission.id || 'p');
     for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
     let phone = list[Math.abs(h) % list.length];
-    // if previously bound number not in this region/seed — rebind
     if (mission.phoneNumber) {
       const found = list.find(p => p.number === mission.phoneNumber || p.id === mission.phoneId);
       if (found) phone = found;
-      else {
-        // force fresh pick
-        phone = list[Math.abs(h) % list.length];
-      }
+      else phone = list[Math.abs(h) % list.length];
     }
     mission.phoneId = phone.id;
     mission.targetPhoneId = phone.id;
-    mission.targetName = phone.ownerName;
-    mission.targetNumber = phone.number;
-    mission.ownerName = phone.ownerName;
+    mission.boundPhoneId = phone.id;
     mission.phoneNumber = phone.number;
-    mission.regionId = regionId;
-    mission.ownerType = phone.ownerType;
-    mission._bound = true;
-    mission._boundSeed = seed;
-    // strip any stacked suffix / never put PHONE_ID in player-facing objective
-    let baseObj = String(mission.objective || '').split(' Сеть:')[0].split(' Цель:')[0].trim();
-    mission.objective = baseObj;
-  } catch (e) {}
+    mission.ownerName = phone.ownerName;
+    mission.protection = phone.protection || 'medium';
+    // Reward scales with protection strength of the target
+    // low +0 · medium +100 · high +200 · hard +300 · xhard +400
+    const protBonus = {
+      low: 0,
+      medium: 100,
+      high: 200,
+      hard: 300,
+      xhard: 400
+    };
+    const base = Number(mission.baseReward != null ? mission.baseReward : mission.reward) || 180;
+    if (mission.baseReward == null) mission.baseReward = base;
+    const bonus = protBonus[String(mission.protection).toLowerCase()] ?? 100;
+    mission.reward = base + bonus;
+    mission.rewardBonus = bonus;
+    mission.difficultyLabel = (
+      { low: 'Слабая', medium: 'Средняя', high: 'Высокая', hard: 'Сложная', xhard: 'Экстрим' }
+    )[String(mission.protection).toLowerCase()] || mission.protection;
+    // XP scales lightly with difficulty
+    const xpBase = Number(mission.baseXp != null ? mission.baseXp : mission.xp) || 40;
+    if (mission.baseXp == null) mission.baseXp = xpBase;
+    mission.xp = xpBase + Math.round(bonus / 10);
+  } catch (err) {
+    console.warn('[bindPhoneMissionTarget]', err);
+  }
   return mission;
 }
+
 
 /** Returns true if mission target exists in stated region under phone seed */
 export function validatePhoneMissionTarget(mission, state) {

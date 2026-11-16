@@ -17,7 +17,7 @@ const svg = {
   terminal:'<rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3m6 0h4"/>',
   darkshop:'<path d="M4 8h16l-1.5 13h-13L4 8Z"/><path d="M8 8V6a4 4 0 0 1 8 0v2"/>',
   browser:'<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>',
-  forge:'<path d="M4 7h16v3H4z"/><path d="M6 10v8h12v-8"/><path d="M9 13h6M9 16h6"/><path d="M12 4v3"/>',
+  forge:'<path d="M12 2.5L3.5 7v10L12 21.5 20.5 17V7L12 2.5z"/><path d="M12 12v9.5M3.5 7L12 12l8.5-5"/><path d="M8.5 9.5l3.5-2 3.5 2"/>',
   map:'<path d="m3 6 6-3 6 3 6-3v15l-6 3-6-3-6 3V6Z"/><path d="M9 3v15m6-12v15"/>',
   mail:'<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m4 7 8 6 8-6"/>',
   blackwire:'<path d="M4 5h16v12H9l-5 4V5Z"/><path d="M8 9h8m-8 4h5"/>',
@@ -27,7 +27,7 @@ const svg = {
   phone:'<rect x="7" y="2" width="10" height="20" rx="2"/><path d="M10 18h4"/>',
   intel:'<circle cx="12" cy="12" r="3"/><path d="M12 3v3m0 12v3M3 12h3m12 0h3"/>',
   computer:'<rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8m-4-4v4"/>',
-  fbi:'<circle cx="12" cy="12" r="9.5"/><circle cx="12" cy="12" r="7"/><path d="M12 5v2.2M12 16.8V19M5 12h2.2M16.8 12H19"/><path d="M9 15.2L12 7.5l3 7.7H9z"/><path d="M9.5 13.2h5"/>'
+  fbi:'<circle cx="12" cy="12" r="10" fill="none"/><circle cx="12" cy="12" r="7.2" fill="none"/><path d="M12 3.8v1.6M12 18.6v1.6M3.8 12h1.6M18.6 12h1.6M6.2 6.2l1.1 1.1M16.7 16.7l1.1 1.1M6.2 17.8l1.1-1.1M16.7 7.3l1.1-1.1"/><path d="M9 16.2L12 6.8l3 9.4H9z"/><path d="M9.4 13.6h5.2"/>'
 };
 const APPS = [
   {id:'bank',title:'Aster Bank',path:'bank://account',ram:1,description:'Игровые кредиты'},
@@ -287,6 +287,16 @@ async function finishBoot() {
   try { renderTaskbar(); } catch(e){ console.error(e); }
   try { updateClock(); } catch{}
   try { processTimedEvents(state.game); } catch{}
+  try {
+    // refresh phone mission targets + protection rewards
+    (state.game.missions?.items||[]).forEach(m => {
+      if (String(m.id||'').startsWith('phone-') && typeof bindPhoneMissionTarget==='function') {
+        // reset base if already compounded from old bug
+        if (m.baseReward != null) m.reward = m.baseReward;
+        bindPhoneMissionTarget(m);
+      }
+    });
+  } catch(e){ console.warn(e); }
   try { const ss=$('saveStatus'); if(ss) ss.textContent=state.provider||''; } catch{}
   try {
     const nick = String(state.game?.player?.nickname||'').trim();
@@ -1403,7 +1413,7 @@ function renderMap(g) {
     const p = pos[r.id] || { x: 50, y: 50 };
     const banned = isNetworkBanned(g, r.id);
     const onNet = net && net.regionId === r.id;
-    return `<button type="button" class="map-point ${selected===r.id?'on':''} ${banned?'banned':''} ${onNet?'linked':''}" style="left:${p.x}%;top:${p.y}%" data-action="map-select" data-id="${esc(r.id)}"><span class="map-label">${esc(r.name)}</span></button>`;
+    return `<button type="button" class="map-point ${selected===r.id?'on':''} ${banned?'banned':''} ${onNet?'linked':''}" style="left:${p.x}%;top:${p.y}%" data-action="map-select" data-id="${esc(r.id)}" aria-label="${esc(r.name)}"><span class="map-label">${esc(r.name)}</span></button>`;
   }).join('');
   const detail = selected ? regions.find(r => r.id === selected) : null;
   let info = '<span class="muted">Выбери район сети</span>';
@@ -1426,7 +1436,7 @@ function renderMap(g) {
   <div class="map-wrap">
     <div class="map-canvas">
       <img class="map-art" src="city_map.jpg" alt="Null-City map" draggable="false">
-      <div class="map-overlay">${points}</div>
+      ${points}
     </div>
   </div>
   <div class="panel map-info section-gap">${info}</div>`;
@@ -1470,7 +1480,8 @@ function renderMissionGuide(m, g) {
     <div class="kv"><span>Цель</span><b>${esc(site?.title || m.target)} · ${esc(site?.domain || '—')}</b></div>
     <div class="kv"><span>Район</span><b>${esc(loc?.name || site?.region || '—')} / ${esc(site?.district || '—')}</b></div>
     <div class="kv"><span>Сложность / SEC</span><b>${esc(m.difficulty)} · ${site?.security ?? '—'}</b></div>
-    <div class="kv"><span>Награда</span><b class="text-green">+${fmt(m.reward)} CR · +${fmt(m.xp)} XP</b></div>
+    <div class="kv"><span>Защита цели</span><b>${esc(m.difficultyLabel||m.protection||'—')} ${missionProtBadge(m)}</b></div>
+    <div class="kv"><span>Награда</span><b class="text-green">+${fmt(m.reward)} CR</b> <span class="muted small">(${fmt(m.baseReward||m.reward)} + ${fmt(m.rewardBonus||0)})</span> · <b>+${fmt(m.xp)} XP</b></div>
     <div class="kv"><span>Плагины</span><b>${esc(tools)}</b></div>
     <div class="divider"></div>
     <p><b>Задача:</b> ${esc(m.objective)}</p>
@@ -1484,6 +1495,12 @@ function renderMissionGuide(m, g) {
 }
 
 
+function missionProtBadge(m) {
+  const p = String(m.protection || '').toLowerCase();
+  const labels = { low:'LOW +0', medium:'MED +100', high:'HIGH +200', hard:'HARD +300', xhard:'XHARD +400' };
+  const cls = { low:'badge green', medium:'badge', high:'badge', hard:'badge amber', xhard:'badge red' };
+  return `<span class="${cls[p]||'badge'}">${labels[p]||(m.difficultyLabel||'—')}</span>`;
+}
 function renderBlackWire(g) {
   const now = Date.now();
   const boardLeft = typeof missionBoardTimer === 'function' ? missionBoardTimer(g, now) : 0;
@@ -1502,8 +1519,9 @@ function renderBlackWire(g) {
     return `<article class="contract-card ${state.selectedMissionId===m.id?'is-selected':''}">
       <div class="contract-top"><strong>${esc(m.title)}</strong><span class="badge ${m.status==='accepted'?'amber':m.status==='submitted'?'green':'gray'}">${m.status==='accepted'?'ACTIVE':m.status==='submitted'?'VERIFYING':(m.category||'JOB').toUpperCase()}</span></div>
       <p>${esc(m.objective)}</p>
-      <div class="contract-meta"><span>ID ${esc(m.id)}</span><span>ЦЕЛЬ ${esc(site?.domain||m.target)}</span><span>${esc(m.difficulty)}</span></div>
-      <div class="contract-meta section-gap"><span class="text-green">+${fmt(m.reward)} CR</span><span>+${fmt(m.xp)} XP</span><span>${esc(m.client)}</span></div>
+      <div class="contract-meta"><span>ID ${esc(m.id)}</span><span>${esc(m.ownerName||m.client||'—')}</span><span>${esc(m.regionId||'')}</span></div>
+      <div class="contract-meta"><span>Защита ${missionProtBadge(m)}</span><span>${esc(m.phoneId||'—')}</span></div>
+      <div class="contract-meta section-gap"><span class="text-green">+${fmt(m.reward)} CR</span><span class="muted small">${m.baseReward!=null?`база ${fmt(m.baseReward)} + бонус ${fmt(m.rewardBonus||0)}`:''}</span><span>+${fmt(m.xp)} XP</span></div>
       <div class="divider"></div>
       <div class="small muted">${esc(m.hint||'')}</div>
       <div class="btn-row">
@@ -3022,8 +3040,9 @@ function handleAction(action,el,ev) {
             eyebrow: 'КОНТРАКТ',
             body: `<p><b>Заказчик:</b> ${esc(m.client||'—')}</p>
               <p><b>Задача:</b> ${esc(m.objective||m.task||'—')}</p>
-              <p><b>Регион:</b> ${esc(m.regionId||'—')} · <b>Телефон:</b> ${esc(m.phoneId||m.boundPhoneId||'—')}</p>
-              <p><b>Награда:</b> ${fmt(m.reward||0)} CR · XP ${m.xp||0}</p>
+              <p><b>Цель:</b> ${esc(m.ownerName||'—')} · ${esc(m.phoneId||m.boundPhoneId||'—')}</p>
+              <p><b>Регион:</b> ${esc(m.regionId||'—')} · <b>Защита:</b> ${esc(m.difficultyLabel||m.protection||'—')}</p>
+              <p><b>Награда:</b> ${fmt(m.reward||0)} CR <span class="muted">(база ${fmt(m.baseReward||0)} + ${fmt(m.rewardBonus||0)})</span> · XP ${m.xp||0}</p>
               <p class="muted">${esc(m.hint||'')}</p>`,
             confirm: 'ЗАКРЫТЬ', cancel: '', onConfirm: () => closeModal()
           });
