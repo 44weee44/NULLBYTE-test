@@ -5,7 +5,7 @@ import {
   processTimedEvents, bankStatus, bankRisk, attemptBankSimulation, saveEditorFile, validateNbs, runNbs, grantXp,
   recordHistory, addBookmark, idempotencyKey,
   PLUGIN_SHELLS, PLUGIN_ANIM, runPluginShellCommand, pluginShellBootLines, resolveSiteRef, savePlayerNamedFile, findFileByName, markServerModified,
-  isPluginLocked, isMissionVisible, xpThresholdForLevel, bindPhoneMissionTarget, ensureTrading, TRADING_TICKERS, tradingSparkline, listRegionPhones, scheduleMailDrop, processMailDrops, sendPlayerMail, processMailDeliveries, tryCompleteLockMissions } from './engine.js';
+  isPluginLocked, isMissionVisible, xpThresholdForLevel, bindPhoneMissionTarget, ensureTrading, TRADING_TICKERS, tradingSparkline, listRegionPhones, scheduleMailDrop, processMailDrops, sendPlayerMail, processMailDeliveries, tryCompleteLockMissions, ensureDarkshop, refreshDarkshopListings, buyDarkshopListing, sellFileToDarkshop, appraiseFileInstance, rarityLabel } from './engine.js';
 import { findPhone, phoneMessages, phoneGallery, phoneCallLog, phoneContacts, phoneFiles, lockPhone, unlockWithPin, isNetworkBanned, PROTECTION_RULES, registerBankFromMessages, PHONE_REGIONS, buildNetworkReport } from './phones.js';
 import { bankLogin, bankTransfer, getBankSession, searchNpcs, pluginDocs, touchNpc, NPC_POOL_SIZE } from './npc.js';
 import { extendedPluginDocs } from './operations.js';
@@ -958,16 +958,35 @@ function renderFiles(g) {
 
 
 function renderDarkShop(g) {
-  return `<div class="app-heading"><div><div class="eyebrow">DARKSHOP</div><h2>DarkShop</h2><p>Каталог</p></div><span class="badge">1</span></div>
-  <div class="list section-gap">
-    <div class="list-row">
-      <div class="list-main"><strong>Сервер (rack node)</strong><small>Выделенный узел · визуал</small></div>
-      <span class="badge">1200 €</span>
-    </div>
-  </div>
-  <div class="notice warning section-gap">Покупка пока недоступна — только витрина.</div>
-  <div class="muted small">Комплектующие CPU/RAM — в разработке.</div>`;
+  ensureDarkshop(g);
+  refreshDarkshopListings(g);
+  const ds = g.darkshop;
+  const tab = state.darkshopTab || 'market';
+  const tabs = [
+    ['market','РЫНОК'],['files','ФАЙЛЫ'],['db','БАЗЫ'],['phones','ТЕЛЕФОНЫ'],['servers','СЕРВЕРЫ'],['sell','МОИ ФАЙЛЫ'],['history','ИСТОРИЯ']
+  ];
+  const tabBar = `<div class="btn-row section-gap" style="flex-wrap:wrap;gap:6px">${tabs.map(([id,l])=>`<button type="button" class="btn tiny ${tab===id?'primary':''}" data-action="darkshop-tab" data-id="${id}">${l}</button>`).join('')}</div>`;
+  let body = '';
+  if (tab === 'history') {
+    const rows = (ds.history||[]).slice(0,40).map(tx => `<div class="list-row"><div class="list-main"><strong>${esc(tx.operation_type==='buy'?'ПОКУПКА':'ПРОДАЖА')} · ${esc(tx.name||tx.instance_id)}</strong><small>${new Date(tx.timestamp).toLocaleString('ru-RU')} · ${esc(tx.transaction_id)}</small></div><b class="${tx.operation_type==='buy'?'text-red':'text-green'}">${tx.operation_type==='buy'?'−':'+'}${fmt(tx.amount_cr)} CR</b></div>`).join('') || '<div class="muted">История пуста.</div>';
+    body = `<div class="list">${rows}</div>`;
+  } else if (tab === 'sell') {
+    const mine = (g.computer.files||[]).filter(f => f.sale_state !== 'sold_to_market');
+    body = mine.length ? `<div class="list">${mine.map(f=>{
+      const ap = appraiseFileInstance(f);
+      return `<div class="list-row"><div class="list-main"><strong>${esc(f.file_name||f.name)}</strong><small>${esc(rarityLabel(f.rarity))} · ${esc(f.file_type||f.kind||'file')} · ${esc((f.content_preview||f.body||'').slice(0,100))}</small></div><div class="list-actions"><span class="badge">${fmt(ap.price)} CR</span><button type="button" class="btn tiny" data-action="darkshop-appraise" data-id="${esc(f.instance_id||f.id)}">ОЦЕНИТЬ</button><button type="button" class="btn tiny primary" data-action="darkshop-sell" data-id="${esc(f.instance_id||f.id)}">ПРОДАТЬ</button></div></div>`;
+    }).join('')}</div>` : '<div class="notice">Нет файлов для продажи. Скачай файлы с телефонов или купи на рынке.</div>';
+  } else {
+    const filter = tab === 'market' ? null : ({files:'file',db:'database',phones:'phone_image',servers:'server'})[tab];
+    const items = (ds.listings||[]).filter(l => l.listing_state === 'listed_by_market' && (!filter || l.item_type === filter || (filter==='file' && !['database','phone_image','server'].includes(l.item_type))));
+    body = items.length ? `<div class="list">${items.map(l=>`<div class="list-row"><div class="list-main"><strong>${esc(l.file_name)}</strong><small>${esc(rarityLabel(l.rarity))} · ${esc(l.item_type)} · ${esc(l.origin||'')} · ${esc(l.description||'')}</small></div><div class="list-actions"><span class="badge">${fmt(l.price_cr)} CR</span><button type="button" class="btn tiny primary" data-action="darkshop-buy" data-id="${esc(l.listing_id)}">КУПИТЬ</button></div></div>`).join('')}</div>` : '<div class="muted">Нет предложений в этой категории.</div>';
+  }
+  return `<div class="app-heading"><div><div class="eyebrow">DARKSHOP / DATA MARKET</div><h2>DarkShop</h2><p>Рынок цифровых данных · не заказы</p></div><span class="badge">${fmt(g.player.credits)} CR</span></div>
+  ${tabBar}
+  <div class="notice section-gap">Покупай и продавай файлы, базы, образы и дампы. Оценка по редкости и полезности. Уценка 75% — только для проданного instance_id.</div>
+  ${body}`;
 }
+
 
 function renderPluginCard(g,p) {
   const installed=getInstalledPlugin(g,p.id);
@@ -2433,7 +2452,7 @@ function renderPhoneLab(g) {
   try { contacts = phoneContacts(phone, now) || []; } catch (e) {}
   const tab = state.phoneLabTab || 'home';
   let files = [];
-  try { files = phoneFiles(phone, now) || []; } catch (e) { files = []; }
+  try { files = phoneFiles(phone, now, state.game) || []; } catch (e) { files = []; }
   const tabs = `<div class="nb-tabs">
       <button type="button" class="nb-tab ${tab==='msgs'||tab==='home'?'on':''}" data-action="phone-lab-tab" data-tab="msgs">MESSAGES</button>
       <button type="button" class="nb-tab ${tab==='calls'?'on':''}" data-action="phone-lab-tab" data-tab="calls">CALLS</button>
@@ -2915,7 +2934,7 @@ function handleAction(action,el,ev) {
       const phone = findPhone(phoneId);
       if (!phone) { toast('Телефон не найден', 'error'); break; }
       let list = [];
-      try { list = phoneFiles(phone) || []; } catch (err) { toast(String(err.message||err), 'error'); break; }
+      try { list = phoneFiles(phone, Date.now(), state.game) || []; } catch (err) { toast(String(err.message||err), 'error'); break; }
       const file = list.find(f => f.id === fileId || f.name === fileId);
       if (!file) { toast('Файл не найден', 'error'); break; }
       if (!state.game.computer) state.game.computer = {};
@@ -3237,6 +3256,49 @@ function handleAction(action,el,ev) {
     case 'ide-copy':{const editor=$('nbsEditor');if(editor){editor.select();const value=editor.value;try{if(navigator.clipboard?.writeText){navigator.clipboard.writeText(value).then(()=>toast('Сценарий скопирован.','success')).catch(()=>toast('Браузер не разрешил доступ к буферу обмена. Используй Ctrl/Cmd+C.','error'));}else{const ok=document.execCommand?.('copy');toast(ok?'Сценарий скопирован.':'Используй Ctrl/Cmd+C для копирования.',ok?'success':'info');}}catch{toast('Используй Ctrl/Cmd+C для копирования.','info');}}break;}
     case 'ide-find':{const editor=$('nbsEditor'),input=$('nbsSearch'),query=input?.value?.trim();if(!editor||!query){toast('Введи текст для поиска.','error');break;}const text=editor.value.toLowerCase(),q=query.toLowerCase();let index=text.indexOf(q,editor.selectionEnd||0);if(index<0)index=text.indexOf(q);if(index<0){toast('Совпадений не найдено.','error');break;}editor.focus();editor.setSelectionRange(index,index+query.length);break;}
     case 'editor-delete':confirm('Удалить NBS-файл?',`Файл ${esc(state.game.editor.files.find(x=>x.id===id)?.name||'')} будет удалён.`,()=>{state.game.editor.files=state.game.editor.files.filter(x=>x.id!==id);scheduleSave();refreshOpenApps();toast('Файл удалён.','success');},{danger:true,confirmText:'УДАЛИТЬ'});break;
+    case 'darkshop-tab':{
+      state.darkshopTab = id || 'market';
+      renderWindow('darkshop');
+      break;
+    }
+    case 'darkshop-buy':{
+      const r = buyDarkshopListing(state.game, id);
+      if(!r.ok){ toast(r.error||'Ошибка','error'); break; }
+      scheduleSave(); toast('Куплено за '+fmt(r.price)+' CR','success'); renderWindow('darkshop'); break;
+    }
+    case 'darkshop-appraise':{
+      const f = (state.game.computer.files||[]).find(x=>(x.instance_id||x.id)===id);
+      if(!f){ toast('Файл не найден','error'); break; }
+      const ap = appraiseFileInstance(f);
+      showModal({
+        title: f.file_name||f.name||'Файл',
+        eyebrow: 'ОЦЕНКА DARKSHOP',
+        body: `<p><b>Редкость:</b> ${esc(rarityLabel(f.rarity))}</p>
+          <p><b>Информативность:</b> ${ap.info}/10</p>
+          <p><b>Состояние:</b> ${esc(f.integrity_state||'full')} · ${esc(f.encryption_state||'none')}</p>
+          <p><b>База:</b> ${fmt(ap.base)} CR · <b>Оценка:</b> <span class="text-green">${fmt(ap.price)} CR</span></p>
+          <p class="muted">${esc(ap.reason)}</p>`,
+        confirm: 'ПРОДАТЬ ЗА '+fmt(ap.price)+' CR',
+        cancel: 'ОСТАВИТЬ',
+        onConfirm: () => {
+          const r = sellFileToDarkshop(state.game, id);
+          if(!r.ok){ toast(r.error||'Ошибка','error'); return; }
+          scheduleSave(); toast('Продано +'+fmt(r.price)+' CR','success'); renderWindow('darkshop');
+        }
+      });
+      break;
+    }
+    case 'darkshop-sell':{
+      const f = (state.game.computer.files||[]).find(x=>(x.instance_id||x.id)===id);
+      if(!f){ toast('Файл не найден','error'); break; }
+      const ap = appraiseFileInstance(f);
+      confirm('Продать файл?', `«${esc(f.file_name||f.name)}» за <b>${fmt(ap.price)} CR</b>.<br><span class="muted">${esc(ap.reason)}</span><br>После продажи этот instance нельзя продать снова (уценка 75%).`, () => {
+        const r = sellFileToDarkshop(state.game, id);
+        if(!r.ok){ toast(r.error||'Ошибка','error'); return; }
+        scheduleSave(); toast('Продано +'+fmt(r.price)+' CR','success'); renderWindow('darkshop');
+      });
+      break;
+    }
     case 'modal-cancel':closeModal();break;
     case 'modal-confirm':finishModal();break;
   }

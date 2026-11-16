@@ -243,6 +243,221 @@ export function validNickname(value) { return /^[A-Za-z0-9]{2,12}$/.test(String(
 export function escapeText(value='') { return String(value).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch])); }
 export function idempotencyKey(prefix='evt') { return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,9)}`; }
 
+
+/** Darkshop market state */
+export function createEmptyDarkshop() {
+  return {
+    version: 1,
+    listings: [],
+    history: [],
+    lastRefresh: 0,
+    soldInstanceIds: {}
+  };
+}
+
+export function ensureDarkshop(state) {
+  if (!state.darkshop || state.darkshop.version !== 1) {
+    state.darkshop = createEmptyDarkshop();
+  }
+  if (!Array.isArray(state.darkshop.listings)) state.darkshop.listings = [];
+  if (!Array.isArray(state.darkshop.history)) state.darkshop.history = [];
+  if (!state.darkshop.soldInstanceIds) state.darkshop.soldInstanceIds = {};
+  return state.darkshop;
+}
+
+const RARITY_LABEL = {
+  trash: 'Мусор', common: 'Обычный', low: 'Низкая', medium: 'Средняя',
+  high: 'Высокая', rare: 'Редкая', exclusive: 'Эксклюзивная'
+};
+
+export function rarityLabel(r) { return RARITY_LABEL[r] || r || 'Обычный'; }
+
+export function appraiseFileInstance(file) {
+  if (!file) return { price: 0, reason: 'Нет файла', info: 0 };
+  const base = Number(file.base_price_cr != null ? file.base_price_cr : file.price) || 0;
+  let info = 5;
+  if (file.integrity_state === 'corrupted' || file.file_type === 'corrupted') info = 1;
+  else if (file.encryption_state === 'locked') info = 3;
+  else if (file.file_type === 'anomaly') info = 6;
+  else if (file.file_type === 'work' || file.file_type === 'data') info = 6;
+  else if (file.file_type === 'encrypted') info = 4;
+  const mult = Number(file.individual_value_multiplier != null ? file.individual_value_multiplier : 1) || 1;
+  const infoF = 0.25 + (info / 10) * 1.0; // 0.25..1.25
+  let cond = 1;
+  if (file.integrity_state === 'corrupted') cond = 0.15;
+  else if (file.encryption_state === 'locked') cond = 0.55;
+  let price = Math.round(base * infoF * cond * mult);
+  // clamp by rarity band roughly
+  const bands = { trash:[0,2], common:[3,8], low:[9,20], medium:[21,55], high:[56,130], rare:[131,280], exclusive:[281,600] };
+  const band = bands[file.rarity] || [0, 600];
+  price = Math.max(band[0], Math.min(band[1], price));
+  if (file.integrity_state === 'corrupted' && info <= 1) price = Math.min(price, 2);
+  const reason = mult < 1
+    ? 'Экземпляр ранее продавался рынку (уценка).'
+    : (file.integrity_state === 'corrupted' ? 'Повреждённый файл — низкая ценность.'
+      : (file.encryption_state === 'locked' ? 'Зашифрован: оценка по метаданным.'
+        : 'Оценка по редкости, полноте и полезности.'));
+  return { price, reason, info, base };
+}
+
+export function refreshDarkshopListings(state, force = false) {
+  const ds = ensureDarkshop(state);
+  const now = Date.now();
+  if (!force && ds.listings.length && now - (ds.lastRefresh || 0) < 30 * 60 * 1000) return ds;
+  // seed market from catalog templates (not real phone instances)
+  const origins = ['неизвестный продавец', 'другой участник сети', 'архивный слив', 'частная коллекция', 'восстановленный дамп'];
+  const cats = [
+    { type: 'file', label: 'Файл' },
+    { type: 'database', label: 'База' },
+    { type: 'phone_image', label: 'Телефон' },
+    { type: 'server', label: 'Сервер' }
+  ];
+  const listings = [];
+  // generate ~18 listings deterministically from nickname seed
+  const seed = String(state.player?.nickname || 'nb') + ':' + Math.floor(now / (30 * 60 * 1000));
+  let h = 2166136261;
+  for (let i = 0; i < seed.length; i++) { h ^= seed.charCodeAt(i); h = Math.imul(h, 16777619); }
+  const samples = [
+    { name: 'Фрагмент переписки .msg', type: 'file', rarity: 'common', price: 6, desc: 'Бытовой диалог, слабый контекст.' },
+    { name: 'Служебная заявка.pdf', type: 'file', rarity: 'low', price: 14, desc: 'Рабочая заявка без вложений.' },
+    { name: 'Журнал доступа (частичный)', type: 'file', rarity: 'medium', price: 32, desc: 'Несколько записей входа, одна аномалия.' },
+    { name: 'Слитый реестр клиентов (фрагмент)', type: 'database', rarity: 'high', price: 88, desc: 'Фрагмент таблицы, часть полей затёрта.' },
+    { name: 'Образ телефона — резервная копия', type: 'phone_image', rarity: 'medium', price: 45, desc: 'Архив без привязки к живому NPC.' },
+    { name: 'Конфиг шлюза (дамп)', type: 'server', rarity: 'high', price: 96, desc: 'Сетевые параметры, без доступа к инфраструктуре.' },
+    { name: 'Повреждённый кэш', type: 'file', rarity: 'trash', price: 1, desc: 'Битый контейнер, полезных данных нет.' },
+    { name: 'Закрытый отчёт (LOCKED)', type: 'file', rarity: 'high', price: 70, desc: 'Зашифрованный контейнер. Payload скрыт.' },
+    { name: 'Финансовая таблица Q', type: 'database', rarity: 'medium', price: 40, desc: 'Локальные суммы, без реквизитов входа.' },
+    { name: 'Архив внутренних заметок', type: 'file', rarity: 'low', price: 12, desc: 'Личные пометки неизвестного автора.' },
+    { name: 'Дамп логов auth', type: 'server', rarity: 'rare', price: 160, desc: 'Редкий срез событий, требует анализа.' },
+    { name: 'Коллекция SMS-дампов', type: 'phone_image', rarity: 'medium', price: 38, desc: 'Набор переписок без привязки к сети.' },
+    { name: 'Аномальная пометка', type: 'file', rarity: 'low', price: 18, desc: 'Странная фраза, источник не подтверждён.' },
+    { name: 'Полный архив проекта (уценка)', type: 'file', rarity: 'rare', price: 55, desc: 'Ранее проданный экземпляр рынка, остаточная цена.' },
+    { name: 'Справочник ролей FBR', type: 'file', rarity: 'medium', price: 28, desc: 'Внутренние коды и пометки (вымышленные).' },
+    { name: 'Экспорт контактов', type: 'database', rarity: 'common', price: 7, desc: 'Обезличенные строки.' },
+    { name: 'Серверный backup.cfg', type: 'server', rarity: 'medium', price: 42, desc: 'Конфиг без ключей доступа.' },
+    { name: 'Досье-черновик', type: 'file', rarity: 'high', price: 110, desc: 'Неподтверждённые связи, высокая информативность.' },
+  ];
+  for (let i = 0; i < samples.length; i++) {
+    const s = samples[i];
+    const id = 'LST-' + (h + i * 9973).toString(36) + '-' + i;
+    const iid = 'MKT-' + (h + i * 131).toString(36);
+    listings.push({
+      listing_id: id,
+      instance_id: iid,
+      item_type: s.type,
+      file_name: s.name,
+      rarity: s.rarity,
+      price_cr: s.price,
+      description: s.desc,
+      integrity_state: s.rarity === 'trash' ? 'corrupted' : 'full',
+      encryption_state: /LOCKED/i.test(s.name) ? 'locked' : 'none',
+      seller_type: 'market',
+      origin: origins[(h + i) % origins.length],
+      listing_state: 'listed_by_market',
+      created_at: now - i * 3600000,
+      base_price_cr: s.price,
+      body: s.desc + '\n\nИсточник: ' + origins[(h + i) % origins.length] + '\nТип: ' + s.type
+    });
+  }
+  ds.listings = listings;
+  ds.lastRefresh = now;
+  return ds;
+}
+
+export function buyDarkshopListing(state, listingId) {
+  const ds = ensureDarkshop(state);
+  const listing = ds.listings.find(l => l.listing_id === listingId && l.listing_state === 'listed_by_market');
+  if (!listing) return { ok: false, error: 'Товар снят с рынка.' };
+  const price = Number(listing.price_cr) || 0;
+  if ((state.player.credits || 0) < price) return { ok: false, error: 'Недостаточно CR.' };
+  state.player.credits -= price;
+  const file = {
+    id: listing.instance_id,
+    instance_id: listing.instance_id,
+    name: listing.file_name,
+    file_name: listing.file_name,
+    type: 'darkshop',
+    kind: listing.item_type || 'file',
+    file_type: listing.item_type || 'file',
+    rarity: listing.rarity,
+    base_price_cr: listing.base_price_cr || price,
+    content_preview: listing.description,
+    body: listing.body || listing.description,
+    plaintext_payload: listing.body || listing.description,
+    encryption_state: listing.encryption_state || 'none',
+    integrity_state: listing.integrity_state || 'full',
+    sale_state: 'owned',
+    individual_value_multiplier: 1,
+    origin_source: 'darkshop',
+    at: Date.now()
+  };
+  if (!state.computer.files) state.computer.files = [];
+  if (state.computer.files.some(f => f.instance_id === file.instance_id || f.id === file.id)) {
+    state.player.credits += price; // rollback
+    return { ok: false, error: 'Уже в инвентаре.' };
+  }
+  state.computer.files.unshift(file);
+  listing.listing_state = 'sold';
+  const tx = {
+    transaction_id: 'TX-' + Date.now().toString(36),
+    operation_type: 'buy',
+    instance_id: file.instance_id,
+    amount_cr: price,
+    timestamp: Date.now(),
+    name: file.name
+  };
+  ds.history.unshift(tx);
+  return { ok: true, file, price, tx };
+}
+
+export function sellFileToDarkshop(state, instanceId) {
+  const ds = ensureDarkshop(state);
+  const files = state.computer?.files || [];
+  const idx = files.findIndex(f => (f.instance_id || f.id) === instanceId);
+  if (idx < 0) return { ok: false, error: 'Файл не найден.' };
+  const file = files[idx];
+  if (file.sale_state === 'sold_to_market' || ds.soldInstanceIds[instanceId]) {
+    return { ok: false, error: 'Этот экземпляр уже продан.' };
+  }
+  const ap = appraiseFileInstance(file);
+  // perform sale
+  files.splice(idx, 1);
+  state.player.credits = (state.player.credits || 0) + ap.price;
+  file.sale_state = 'sold_to_market';
+  file.individual_value_multiplier = 0.25;
+  file.previous_appraisal_cr = ap.price;
+  ds.soldInstanceIds[instanceId] = true;
+  // optional: list back at 25%
+  ds.listings.unshift({
+    listing_id: 'LST-P-' + instanceId,
+    instance_id: instanceId,
+    item_type: file.file_type || file.kind || 'file',
+    file_name: file.file_name || file.name,
+    rarity: file.rarity || 'common',
+    price_cr: Math.max(0, Math.round(ap.price * 0.25)),
+    description: (file.content_preview || file.body || '').slice(0, 160),
+    integrity_state: file.integrity_state || 'full',
+    encryption_state: file.encryption_state || 'none',
+    seller_type: 'player_resale',
+    origin: 'продан игроком',
+    listing_state: 'listed_by_market',
+    created_at: Date.now(),
+    base_price_cr: file.base_price_cr || ap.base,
+    body: file.body || file.plaintext_payload || '',
+    individual_value_multiplier: 0.25
+  });
+  const tx = {
+    transaction_id: 'TX-' + Date.now().toString(36),
+    operation_type: 'sell',
+    instance_id: instanceId,
+    amount_cr: ap.price,
+    timestamp: Date.now(),
+    name: file.name || file.file_name
+  };
+  ds.history.unshift(tx);
+  return { ok: true, price: ap.price, tx, appraisal: ap };
+}
+
 export function createInitialState(tgUser=null) {
   const now=Date.now();
   const state0 = {
