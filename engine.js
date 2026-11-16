@@ -80,38 +80,38 @@ export function tradingSparkline(values, w = 120, h = 36) {
 
 
 export const PHONE_JOBS = [
-  {id:'phone-001',title:'Список контактов',client:'Mira Voss',target:'phone',category:'phone',difficulty:'Лёгкая',minLevel:1,reward:180,xp:40,
+  {id:'phone-001',title:'Список контактов',client:'Mira Voss',target:'phone',category:'phone',difficulty:'Лёгкая',minLevel:1,reward:280,xp:55,
     objective:'Подключись к сети региона цели, открой телефон и выгрузи contacts.',
     hint:'net-link → connect <region> → net-analyzer → phone-access open → Phone Lab → Контакты → N-Mail заказчику',
     regionId:'bayshore',ownerHint:'Alex Voss',task:'contacts',requiredPlugins:['net-link','net-analyzer','phone-access']},
-  {id:'phone-002',title:'Снимок переписки',client:'Harbor Desk',target:'phone',category:'phone',difficulty:'Лёгкая',minLevel:1,reward:220,xp:50,
+  {id:'phone-002',title:'Снимок переписки',client:'Harbor Desk',target:'phone',category:'phone',difficulty:'Лёгкая',minLevel:1,reward:340,xp:65,
     objective:'Сохрани SMS (msgs) целевого телефона в файл и сдай через N-Mail.',
     hint:'Phone Lab → SMS → Сохранить SMS → письмо заказчику',
     regionId:'midtown',ownerHint:'Eli North',task:'msgs',requiredPlugins:['phone-access']},
-  {id:'phone-003',title:'Звонок от имени',client:'Null Courier',target:'phone',category:'phone',difficulty:'Средняя',minLevel:1,reward:320,xp:70,
+  {id:'phone-003',title:'Звонок от имени',client:'Null Courier',target:'phone',category:'phone',difficulty:'Средняя',minLevel:1,reward:480,xp:90,
     objective:'Открой указанный телефон в Phone Lab (сессия access).',
     hint:'open PHONE_ID из сети региона → Phone Lab',
     regionId:'ironreach',ownerHint:'Kai Reed',task:'access',requiredPlugins:['phone-access']},
-  {id:'phone-004',title:'Галерея для заказа',client:'Green Mart',target:'phone',category:'phone',difficulty:'Средняя',minLevel:1,reward:280,xp:60,
+  {id:'phone-004',title:'Галерея для заказа',client:'Green Mart',target:'phone',category:'phone',difficulty:'Средняя',minLevel:1,reward:420,xp:80,
     objective:'Экспортируй gallery телефона в файл.',
     hint:'Phone Lab → Галерея → Сохранить галерею',
     regionId:'southgate',ownerHint:'Nora Shaw',task:'gallery',requiredPlugins:['phone-access']},
-  {id:'phone-005',title:'Блокировка на полчаса',client:'Shadowline Ops',target:'phone',category:'phone',difficulty:'Средняя',minLevel:1,reward:350,xp:80,
+  {id:'phone-005',title:'Блокировка на полчаса',client:'Shadowline Ops',target:'phone',category:'phone',difficulty:'Средняя',minLevel:1,reward:520,xp:100,
     objective:'Заблокируй целевой телефон на 30 минут (Lock в Phone Lab).',
     hint:'Phone Lab → Lock 30м',
     regionId:'shadowline',ownerHint:'Dax Kane',task:'lock',requiredPlugins:['phone-access']},
-  {id:'phone-006',title:'Номер из Окриджа',client:'Oakridge Watch',target:'phone',category:'phone',difficulty:'Лёгкая',minLevel:1,reward:200,xp:45,
+  {id:'phone-006',title:'Номер из Окриджа',client:'Oakridge Watch',target:'phone',category:'phone',difficulty:'Лёгкая',minLevel:1,reward:300,xp:60,
     objective:'Найди телефон в сети oakridge и сохрани contacts.',
     hint:'connect oakridge → scan → open → contacts',
     regionId:'oakridge',ownerHint:'Vera Cole',task:'contacts',requiredPlugins:['net-link','net-analyzer','phone-access']},
-  {id:'phone-007',title:'SMS из Мидтауна',client:'Spine Desk',target:'phone',category:'phone',difficulty:'Лёгкая',minLevel:1,reward:210,xp:48,
+  {id:'phone-007',title:'SMS из Мидтауна',client:'Spine Desk',target:'phone',category:'phone',difficulty:'Лёгкая',minLevel:1,reward:320,xp:62,
     objective:'Сними переписку телефона в midtown.',
     hint:'connect midtown → open → сохранить SMS',
     regionId:'midtown',ownerHint:'Sam Hayes',task:'msgs',requiredPlugins:['phone-access']},
 ];
 
 export const BALANCE = {
-  creditsStart: 650,
+  creditsStart: 2500,
   maxLevel: 9999,
   xpToLevel: [0, 100, 260, 480, 760, 1100, 1500, 1960, 2480, 3060, 3700],
   verificationDelayMs: 5500,
@@ -245,9 +245,41 @@ export function idempotencyKey(prefix='evt') { return `${prefix}-${Date.now().to
 
 
 /** Darkshop market state */
+export function getCredits(state) {
+  const n = Number(state?.economy?.credits);
+  if (Number.isFinite(n)) return n;
+  return Number(state?.player?.credits) || 0;
+}
+export function setCredits(state, value) {
+  const v = Math.max(0, Math.round(Number(value) || 0));
+  if (!state.economy) state.economy = { credits: v, transactions: [] };
+  state.economy.credits = v;
+  // keep mirror for legacy UI that reads player.credits
+  if (state.player) state.player.credits = v;
+  return v;
+}
+export function addCredits(state, delta, reason = '') {
+  const next = getCredits(state) + (Number(delta) || 0);
+  setCredits(state, next);
+  if (!state.economy.transactions) state.economy.transactions = [];
+  if (delta) {
+    state.economy.transactions.unshift({
+      id: 'txn_' + Date.now().toString(36),
+      type: delta >= 0 ? 'income' : 'expense',
+      amount: Math.abs(Number(delta) || 0),
+      reason: reason || (delta >= 0 ? 'income' : 'expense'),
+      at: Date.now()
+    });
+  }
+  if (delta > 0 && state.player) {
+    state.player.totalEarned = (Number(state.player.totalEarned) || 0) + delta;
+  }
+  return getCredits(state);
+}
+
 export function createEmptyDarkshop() {
   return {
-    version: 1,
+    version: 2,
     listings: [],
     history: [],
     lastRefresh: 0,
@@ -256,7 +288,7 @@ export function createEmptyDarkshop() {
 }
 
 export function ensureDarkshop(state) {
-  if (!state.darkshop || state.darkshop.version !== 1) {
+  if (!state.darkshop || state.darkshop.version !== 2) {
     state.darkshop = createEmptyDarkshop();
   }
   if (!Array.isArray(state.darkshop.listings)) state.darkshop.listings = [];
@@ -318,24 +350,24 @@ export function refreshDarkshopListings(state, force = false) {
   let h = 2166136261;
   for (let i = 0; i < seed.length; i++) { h ^= seed.charCodeAt(i); h = Math.imul(h, 16777619); }
   const samples = [
-    { name: 'Фрагмент переписки .msg', type: 'file', rarity: 'common', price: 6, desc: 'Бытовой диалог, слабый контекст.' },
+    { name: 'Фрагмент переписки .msg', type: 'file', rarity: 'common', price: 150, desc: 'Бытовой диалог, слабый контекст.' },
     { name: 'Служебная заявка.pdf', type: 'file', rarity: 'low', price: 14, desc: 'Рабочая заявка без вложений.' },
     { name: 'Журнал доступа (частичный)', type: 'file', rarity: 'medium', price: 32, desc: 'Несколько записей входа, одна аномалия.' },
-    { name: 'Слитый реестр клиентов (фрагмент)', type: 'database', rarity: 'high', price: 88, desc: 'Фрагмент таблицы, часть полей затёрта.' },
-    { name: 'Образ телефона — резервная копия', type: 'phone_image', rarity: 'medium', price: 45, desc: 'Архив без привязки к живому NPC.' },
-    { name: 'Конфиг шлюза (дамп)', type: 'server', rarity: 'high', price: 96, desc: 'Сетевые параметры, без доступа к инфраструктуре.' },
-    { name: 'Повреждённый кэш', type: 'file', rarity: 'trash', price: 1, desc: 'Битый контейнер, полезных данных нет.' },
+    { name: 'Слитый реестр клиентов (фрагмент)', type: 'database', rarity: 'high', price: 180, desc: 'Фрагмент таблицы, часть полей затёрта.' },
+    { name: 'Образ телефона — резервная копия', type: 'phone_image', rarity: 'medium', price: 95, desc: 'Архив без привязки к живому NPC.' },
+    { name: 'Конфиг шлюза (дамп)', type: 'server', rarity: 'high', price: 200, desc: 'Сетевые параметры, без доступа к инфраструктуре.' },
+    { name: 'Повреждённый кэш', type: 'file', rarity: 'trash', price: 2, desc: 'Битый контейнер, полезных данных нет.' },
     { name: 'Закрытый отчёт (LOCKED)', type: 'file', rarity: 'high', price: 70, desc: 'Зашифрованный контейнер. Payload скрыт.' },
-    { name: 'Финансовая таблица Q', type: 'database', rarity: 'medium', price: 40, desc: 'Локальные суммы, без реквизитов входа.' },
-    { name: 'Архив внутренних заметок', type: 'file', rarity: 'low', price: 12, desc: 'Личные пометки неизвестного автора.' },
-    { name: 'Дамп логов auth', type: 'server', rarity: 'rare', price: 160, desc: 'Редкий срез событий, требует анализа.' },
-    { name: 'Коллекция SMS-дампов', type: 'phone_image', rarity: 'medium', price: 38, desc: 'Набор переписок без привязки к сети.' },
-    { name: 'Аномальная пометка', type: 'file', rarity: 'low', price: 18, desc: 'Странная фраза, источник не подтверждён.' },
-    { name: 'Полный архив проекта (уценка)', type: 'file', rarity: 'rare', price: 55, desc: 'Ранее проданный экземпляр рынка, остаточная цена.' },
+    { name: 'Финансовая таблица Q', type: 'database', rarity: 'medium', price: 85, desc: 'Локальные суммы, без реквизитов входа.' },
+    { name: 'Архив внутренних заметок', type: 'file', rarity: 'low', price: 60, desc: 'Личные пометки неизвестного автора.' },
+    { name: 'Дамп логов auth', type: 'server', rarity: 'rare', price: 320, desc: 'Редкий срез событий, требует анализа.' },
+    { name: 'Коллекция SMS-дампов', type: 'phone_image', rarity: 'medium', price: 80, desc: 'Набор переписок без привязки к сети.' },
+    { name: 'Аномальная пометка', type: 'file', rarity: 'low', price: 40, desc: 'Странная фраза, источник не подтверждён.' },
+    { name: 'Полный архив проекта (уценка)', type: 'file', rarity: 'rare', price: 120, desc: 'Ранее проданный экземпляр рынка, остаточная цена.' },
     { name: 'Справочник ролей FBR', type: 'file', rarity: 'medium', price: 28, desc: 'Внутренние коды и пометки (вымышленные).' },
-    { name: 'Экспорт контактов', type: 'database', rarity: 'common', price: 7, desc: 'Обезличенные строки.' },
-    { name: 'Серверный backup.cfg', type: 'server', rarity: 'medium', price: 42, desc: 'Конфиг без ключей доступа.' },
-    { name: 'Досье-черновик', type: 'file', rarity: 'high', price: 110, desc: 'Неподтверждённые связи, высокая информативность.' },
+    { name: 'Экспорт контактов', type: 'database', rarity: 'common', price: 16, desc: 'Обезличенные строки.' },
+    { name: 'Серверный backup.cfg', type: 'server', rarity: 'medium', price: 90, desc: 'Конфиг без ключей доступа.' },
+    { name: 'Досье-черновик', type: 'file', rarity: 'high', price: 240, desc: 'Неподтверждённые связи, высокая информативность.' },
   ];
   for (let i = 0; i < samples.length; i++) {
     const s = samples[i];
@@ -366,11 +398,17 @@ export function refreshDarkshopListings(state, force = false) {
 
 export function buyDarkshopListing(state, listingId) {
   const ds = ensureDarkshop(state);
-  const listing = ds.listings.find(l => l.listing_id === listingId && l.listing_state === 'listed_by_market');
-  if (!listing) return { ok: false, error: 'Товар снят с рынка.' };
-  const price = Number(listing.price_cr) || 0;
-  if ((state.player.credits || 0) < price) return { ok: false, error: 'Недостаточно CR.' };
-  state.player.credits -= price;
+  const listing = (ds.listings || []).find(l => String(l.listing_id) === String(listingId) && l.listing_state === 'listed_by_market');
+  if (!listing) return { ok: false, error: 'Товар снят с рынка или не найден.' };
+  const price = Math.max(0, Number(listing.price_cr) || 0);
+  const bal = getCredits(state);
+  if (bal < price) return { ok: false, error: 'Недостаточно CR (' + bal + ' / ' + price + ').' };
+  if (!state.computer) state.computer = { files: [] };
+  if (!state.computer.files) state.computer.files = [];
+  if (state.computer.files.some(f => f.instance_id === listing.instance_id || f.id === listing.instance_id)) {
+    return { ok: false, error: 'Уже в инвентаре.' };
+  }
+  addCredits(state, -price, 'Darkshop покупка: ' + (listing.file_name || listing.listing_id));
   const file = {
     id: listing.instance_id,
     instance_id: listing.instance_id,
@@ -387,15 +425,10 @@ export function buyDarkshopListing(state, listingId) {
     encryption_state: listing.encryption_state || 'none',
     integrity_state: listing.integrity_state || 'full',
     sale_state: 'owned',
-    individual_value_multiplier: 1,
+    individual_value_multiplier: Number(listing.individual_value_multiplier) || 1,
     origin_source: 'darkshop',
     at: Date.now()
   };
-  if (!state.computer.files) state.computer.files = [];
-  if (state.computer.files.some(f => f.instance_id === file.instance_id || f.id === file.id)) {
-    state.player.credits += price; // rollback
-    return { ok: false, error: 'Уже в инвентаре.' };
-  }
   state.computer.files.unshift(file);
   listing.listing_state = 'sold';
   const tx = {
@@ -422,7 +455,7 @@ export function sellFileToDarkshop(state, instanceId) {
   const ap = appraiseFileInstance(file);
   // perform sale
   files.splice(idx, 1);
-  state.player.credits = (state.player.credits || 0) + ap.price;
+  addCredits(state, ap.price, 'Darkshop продажа: ' + (file.file_name || file.name || instanceId));
   file.sale_state = 'sold_to_market';
   file.individual_value_multiplier = 0.25;
   file.previous_appraisal_cr = ap.price;
@@ -2224,10 +2257,10 @@ export function bindPhoneMissionTarget(mission, seedRoot = 'nb') {
     // low +0 · medium +100 · high +200 · hard +300 · xhard +400
     const protBonus = {
       low: 0,
-      medium: 100,
-      high: 200,
-      hard: 300,
-      xhard: 400
+      medium: 150,
+      high: 300,
+      hard: 450,
+      xhard: 650
     };
     const base = Number(mission.baseReward != null ? mission.baseReward : mission.reward) || 180;
     if (mission.baseReward == null) mission.baseReward = base;

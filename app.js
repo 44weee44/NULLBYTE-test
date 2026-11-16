@@ -288,6 +288,19 @@ async function finishBoot() {
   try { updateClock(); } catch{}
   try { processTimedEvents(state.game); } catch{}
   try {
+    // sync legacy player.credits ↔ economy.credits
+    if (state.game.economy && state.game.player) {
+      if (state.game.economy.credits == null && state.game.player.credits != null)
+        state.game.economy.credits = Number(state.game.player.credits)||0;
+      state.game.player.credits = Number(state.game.economy.credits)||0;
+    }
+    if (state.game.darkshop && state.game.darkshop.version !== 2) {
+      state.game.darkshop.version = 2;
+      state.game.darkshop.listings = [];
+      state.game.darkshop.lastRefresh = 0;
+    }
+  } catch(e){}
+  try {
     // refresh phone mission targets + protection rewards
     (state.game.missions?.items||[]).forEach(m => {
       if (String(m.id||'').startsWith('phone-') && typeof bindPhoneMissionTarget==='function') {
@@ -981,7 +994,7 @@ function renderDarkShop(g) {
     const items = (ds.listings||[]).filter(l => l.listing_state === 'listed_by_market' && (!filter || l.item_type === filter || (filter==='file' && !['database','phone_image','server'].includes(l.item_type))));
     body = items.length ? `<div class="list">${items.map(l=>`<div class="list-row"><div class="list-main"><strong>${esc(l.file_name)}</strong><small>${esc(rarityLabel(l.rarity))} · ${esc(l.item_type)} · ${esc(l.origin||'')} · ${esc(l.description||'')}</small></div><div class="list-actions"><span class="badge">${fmt(l.price_cr)} CR</span><button type="button" class="btn tiny primary" data-action="darkshop-buy" data-id="${esc(l.listing_id)}">КУПИТЬ</button></div></div>`).join('')}</div>` : '<div class="muted">Нет предложений в этой категории.</div>';
   }
-  return `<div class="app-heading"><div><div class="eyebrow">DARKSHOP / DATA MARKET</div><h2>DarkShop</h2><p>Рынок цифровых данных · не заказы</p></div><span class="badge">${fmt(g.player.credits)} CR</span></div>
+  return `<div class="app-heading"><div><div class="eyebrow">DARKSHOP / DATA MARKET</div><h2>DarkShop</h2><p>Рынок цифровых данных · не заказы</p></div><span class="badge">${fmt((g.economy&&g.economy.credits!=null)?g.economy.credits:(g.player.credits||0))} CR</span></div>
   ${tabBar}
   <div class="notice section-gap">Покупай и продавай файлы, базы, образы и дампы. Оценка по редкости и полезности. Уценка 75% — только для проданного instance_id.</div>
   ${body}`;
@@ -3262,9 +3275,19 @@ function handleAction(action,el,ev) {
       break;
     }
     case 'darkshop-buy':{
-      const r = buyDarkshopListing(state.game, id);
-      if(!r.ok){ toast(r.error||'Ошибка','error'); break; }
-      scheduleSave(); toast('Куплено за '+fmt(r.price)+' CR','success'); renderWindow('darkshop'); break;
+      const lid = id || el.dataset.id || el.getAttribute('data-id');
+      try {
+        const r = buyDarkshopListing(state.game, lid);
+        if(!r.ok){ toast(r.error||'Ошибка покупки','error'); break; }
+        scheduleSave();
+        toast('Куплено «'+(r.file?.name||'')+'» −'+fmt(r.price)+' CR','success');
+        renderWindow('darkshop');
+        try { refreshOpenApps(['bank','profile','files','computer']); } catch(e){}
+      } catch (err) {
+        console.error(err);
+        toast(String(err.message||err),'error');
+      }
+      break;
     }
     case 'darkshop-appraise':{
       const f = (state.game.computer.files||[]).find(x=>(x.instance_id||x.id)===id);
