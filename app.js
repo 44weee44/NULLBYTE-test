@@ -11,7 +11,7 @@ import { bankLogin, bankTransfer, getBankSession, searchNpcs, pluginDocs, touchN
 import { extendedPluginDocs } from './operations.js';
 import { loadSavedGame, saveGame } from './storage.js';
 
-const $ = id => document.getElementById(id);
+const $ = id => { try { return document.getElementById(id); } catch { return null; } };
 const svg = {
   profile:'<circle cx="12" cy="8" r="4"/><path d="M4 21c.7-4.1 3.3-6.2 8-6.2s7.3 2.1 8 6.2"/>',
   terminal:'<rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3m6 0h4"/>',
@@ -229,10 +229,11 @@ function boot() {
       .replace(/(BOOT_IMAGE=\/boot\/vmlinuz|root=UUID=nullbyte)/g, '<span class="boot-hi">$1</span>')
       .replace(/(player save|NULLBYTE Simulation Environment|nullbyte|nullnet|phone-lab|nbs-ide)/g, '<span class="boot-hi">$1</span>');
     row.innerHTML = html;
-    log.append(row);
-    log.scrollTop = log.scrollHeight;
+    if (log) { log.append(row); log.scrollTop = log.scrollHeight; }
     setTimeout(run, 220 + Math.random() * 180);
   };
+  // failsafe: never stuck on boot
+  setTimeout(() => { try { if (!bootFinished) finishBoot(); } catch (e) { console.error(e); } }, 9000);
   run();
 }
 
@@ -253,33 +254,52 @@ async function finishBoot() {
   } catch(e) {
     console.warn('[NULLBYTE] Telegram init error', e);
   }
-  await new Promise(r => setTimeout(r, 400));
+  await new Promise(r => setTimeout(r, 200));
   const tgUser=window.Telegram?.WebApp?.initDataUnsafe?.user||null;
-  let loaded=await loadSavedGame(tgUser);
-  // Second attempt if cloud failed and no nickname (common Telegram race).
-  if(!loaded.state?.player?.nickname && window.Telegram?.WebApp?.CloudStorage){
-    await new Promise(r => setTimeout(r, 500));
-    const retry=await loadSavedGame(tgUser);
-    if(retry.state?.player?.nickname) loaded=retry;
+  let loaded;
+  try {
+    loaded = await loadSavedGame(tgUser);
+    if(!loaded?.state?.player?.nickname && window.Telegram?.WebApp?.CloudStorage){
+      await new Promise(r => setTimeout(r, 400));
+      try {
+        const retry = await loadSavedGame(tgUser);
+        if(retry?.state?.player?.nickname) loaded = retry;
+      } catch (e2) { console.warn(e2); }
+    }
+  } catch (e) {
+    console.error('[loadSavedGame]', e);
+    loaded = { state: createInitialState(), provider: 'NEW GAME', warning: 'Сохранение недоступно', blocked: false };
   }
-  state.game=loaded.state;state.provider=loaded.provider;state.saveWarning=loaded.warning;state.saveBlocked=Boolean(loaded.blocked);
-  $('bootScreen').hidden=true;$('desktopShell').hidden=false;
-  renderDesktopIcons();renderTaskbar();updateClock();
-  processTimedEvents(state.game);
-  $('saveStatus').textContent=state.provider;
-  const nick = String(state.game.player.nickname||'').trim();
-  state.game.player.nickname = nick;
-  if(!nick) {
-    showNicknameModal();
-    if(loaded.warning) toast(loaded.warning,'error');
-  } else {
-    toast(`С возвращением, ${nick}.`, 'success');
-    if(loaded.warning) toast(loaded.warning,'error');
+  try {
+    state.game = loaded?.state || createInitialState();
+    state.provider = loaded?.provider || 'NEW GAME';
+    state.saveWarning = loaded?.warning || '';
+    state.saveBlocked = Boolean(loaded?.blocked);
+  } catch (e) {
+    state.game = createInitialState();
+    state.provider = 'NEW GAME';
   }
-  if(state.game.player.nickname && !state.saveBlocked) {
-    await persist();
-  } else {
-    scheduleSave();
+  try { const bs=$('bootScreen'); if(bs) bs.hidden=true; } catch{}
+  try { const ds=$('desktopShell'); if(ds) ds.hidden=false; } catch{}
+  try { renderDesktopIcons(); } catch(e){ console.error(e); }
+  try { renderTaskbar(); } catch(e){ console.error(e); }
+  try { updateClock(); } catch{}
+  try { processTimedEvents(state.game); } catch{}
+  try { const ss=$('saveStatus'); if(ss) ss.textContent=state.provider||''; } catch{}
+  try {
+    const nick = String(state.game?.player?.nickname||'').trim();
+    if (state.game?.player) state.game.player.nickname = nick;
+    if(!nick) {
+      showNicknameModal();
+      if(loaded?.warning) toast(loaded.warning,'error');
+    } else {
+      toast('С возвращением, ' + nick + '.', 'success');
+      if(loaded?.warning) toast(loaded.warning,'error');
+    }
+    if(nick && !state.saveBlocked) await persist();
+    else scheduleSave();
+  } catch (e) {
+    console.error('[finishBoot ui]', e);
   }
 }
 function showNicknameModal() {
@@ -3232,10 +3252,21 @@ document.addEventListener('pointerdown',event=>{
     queueMicrotask(()=>{ if(editable.isConnected && !editable.disabled) editable.focus({preventScroll:true}); });
   }
 },true);
-$('startButton').addEventListener('click',()=>{$('startMenu').hidden=!$('startMenu').hidden;$('startButton').setAttribute('aria-expanded',String(!$('startMenu').hidden));});
-document.addEventListener('pointerdown',e=>{if(!$('startMenu').hidden&&!$('startMenu').contains(e.target)&&!e.target.closest('#startButton')){$('startMenu').hidden=true;$('startButton').setAttribute('aria-expanded','false');}});
-document.addEventListener('keydown',e=>{if(e.key==='Escape'){if(!$('modalBackdrop').hidden)closeModal();else if(!$('startMenu').hidden){$('startMenu').hidden=true;$('startButton').setAttribute('aria-expanded','false');}}});
-$('modalBackdrop').addEventListener('click',e=>{if(e.target===$('modalBackdrop')&&state.modalConfirm===null)closeModal();});
+try {
+  const startBtn=$('startButton'), startMenu=$('startMenu');
+  if (startBtn && startMenu) {
+    startBtn.addEventListener('click',()=>{startMenu.hidden=!startMenu.hidden;startBtn.setAttribute('aria-expanded',String(!startMenu.hidden));});
+    document.addEventListener('pointerdown',e=>{if(!startMenu.hidden&&!startMenu.contains(e.target)&&!e.target.closest('#startButton')){startMenu.hidden=true;startBtn.setAttribute('aria-expanded','false');}});
+  }
+  document.addEventListener('keydown',e=>{
+    if(e.key!=='Escape')return;
+    const mb=$('modalBackdrop');
+    if(mb && !mb.hidden) closeModal();
+    else if(startMenu && !startMenu.hidden){ startMenu.hidden=true; startBtn?.setAttribute('aria-expanded','false'); }
+  });
+  const mb=$('modalBackdrop');
+  if(mb) mb.addEventListener('click',e=>{if(e.target===mb && state.modalConfirm===null) closeModal();});
+} catch (e) { console.error('[bind chrome]', e); }
 
 window.addEventListener('beforeunload',()=>{if(state.game&&!state.saveBlocked){state.game.meta.updatedAt=Date.now();try{localStorage.setItem('nullbyte_save_v1',JSON.stringify(state.game));}catch{}}});
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden')persist();});
@@ -3321,4 +3352,4 @@ document.addEventListener('submit',event=>{
     });
   }
 });
-boot();
+try { boot(); } catch (e) { console.error('[boot]', e); try { if(!bootFinished) finishBoot(); } catch (e2) {} }
