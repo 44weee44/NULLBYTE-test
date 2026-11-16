@@ -1246,3 +1246,33 @@ html,body{background:#0a0a0a!important;font-size:12px!important}
 }
 .window-app-mark{flex:0 0 auto}
 .window-controls{flex:0 0 auto}
+
+/* click-safety */
+.boot-screen[hidden],
+#bootScreen[hidden]{
+  display:none!important;
+  pointer-events:none!important;
+  visibility:hidden!important;
+  z-index:-1!important;
+}
+.modal-backdrop[hidden],
+#modalBackdrop[hidden]{
+  display:none!important;
+  pointer-events:none!important;
+  visibility:hidden!important;
+}
+.desktop-icons, .desktop-icon, .taskbar, .taskbar-app, .top-panel, .btn, [data-action]{
+  pointer-events:auto!important;
+}
+.window-content, .window-content *{
+  pointer-events:auto;
+}
+/* labels inside buttons shouldn't block on old webviews */
+.desktop-icon span, .btn span, .map-label{
+  pointer-events:none;
+}
+.desktop-icon, .btn, .map-point, [data-action]{
+  pointer-events:auto!important;
+  touch-action:manipulation;
+  cursor:pointer;
+}

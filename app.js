@@ -279,8 +279,10 @@ async function finishBoot() {
     state.game = createInitialState();
     state.provider = 'NEW GAME';
   }
-  try { const bs=$('bootScreen'); if(bs) bs.hidden=true; } catch{}
+  try { const bs=$('bootScreen'); if(bs){ bs.hidden=true; bs.style.display='none'; bs.style.pointerEvents='none'; } } catch{}
   try { const ds=$('desktopShell'); if(ds) ds.hidden=false; } catch{}
+  try { closeModal(); } catch{}
+  try { const mb=$('modalBackdrop'); if(mb){ mb.hidden=true; mb.setAttribute('hidden',''); mb.style.display='none'; mb.style.pointerEvents='none'; } } catch{}
   try { renderDesktopIcons(); } catch(e){ console.error(e); }
   try { renderTaskbar(); } catch(e){ console.error(e); }
   try { updateClock(); } catch{}
@@ -2968,9 +2970,12 @@ function handleAction(action,el,ev) {
       else if(state.game.phoneWorld){ state.game.phoneWorld.access[id]={...(state.game.phoneWorld.access[id]||{}), blockedUntil:Date.now()+30*60*1000}; }
       toast('Lock 30м','success'); scheduleSave(); renderWindow('phone'); break;
     }
-    case 'open-app':$('startMenu').hidden=true;$('startButton').setAttribute('aria-expanded','false');
+    case 'open-app':{
+      const sm=$('startMenu'); if(sm) sm.hidden=true;
+      const sb=$('startButton'); if(sb) sb.setAttribute('aria-expanded','false');
       if(app==='browser'&&state.game&&typeof ensureTrading==='function') ensureTrading(state.game);
-      openApp(app);break;
+      openApp(app); break;
+    }
     case 'close-window':closeWindow(el.closest('.app-window')?.dataset.window);break;
     case 'toggle-pin-window': togglePinWindow(el.closest('.app-window')?.dataset.window); break;
     case 'minimize-window':minimizeWindow(el.closest('.app-window')?.dataset.window);break;
@@ -3221,26 +3226,38 @@ function handleAction(action,el,ev) {
 
 function onUiAction(event){
   try {
-    const button = event.target.closest && event.target.closest('[data-action]');
+    // Only primary pointer / click
+    if (event.type === 'pointerup' && event.pointerType === 'mouse' && event.button !== 0) return;
+    if (event.type === 'click' && event.button != null && event.button !== 0) return;
+
+    const target = event.target;
+    if (!target || !target.closest) return;
+    const button = target.closest('[data-action]');
     if (!button) return;
-    // ignore right-click
-    if (event.button != null && event.button !== 0) return;
-    const action = button.dataset.action;
-    if (!action) return;
+
+    // Don't treat pure text typing as UI action
+    if (target.closest('input,textarea,select') && !target.closest('button,[data-action]')) return;
+    if (target.matches && target.matches('input,textarea,select') && button === target) return;
+
+    const action = button.getAttribute('data-action') || button.dataset.action;
+    if (!action || action === 'noop') return;
+
     const now = Date.now();
-    // tighter debounce only for same action on same node
-    const key = action + '|' + (button.dataset.id || button.dataset.app || '');
-    if (button._nbActKey === key && button._nbActAt && now - button._nbActAt < 220) return;
-    button._nbActAt = now;
-    button._nbActKey = key;
+    const key = action + '|' + (button.getAttribute('data-id')||button.getAttribute('data-app')||button.getAttribute('data-site')||'');
+    // Deduplicate click+pointerup pair and rapid double fires
+    if (onUiAction._lastKey === key && now - (onUiAction._lastAt||0) < 280) return;
+    onUiAction._lastKey = key;
+    onUiAction._lastAt = now;
+
     handleAction(action, button, event);
   } catch (err) {
     console.error('[NULLBYTE] action', err);
-    try { toast(String(err.message || err), 'error'); } catch (e) {}
+    try { toast(String(err.message||err), 'error'); } catch(e) {}
   }
 }
+
 document.addEventListener('click', onUiAction, false);
-// iOS: some controls only fire touch end reliably — use click which iOS synthesizes
+document.addEventListener('pointerup', onUiAction, false);
 
 
 document.addEventListener('pointerdown',event=>{
