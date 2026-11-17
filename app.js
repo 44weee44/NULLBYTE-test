@@ -31,24 +31,31 @@ const svg = {
 };
 const APPS = [
   {id:'bank',title:'Aster Bank',path:'bank://account',ram:1,description:'Игровые кредиты'},
-  {id:'terminal',title:'Терминал',path:'terminal://nbshell',ram:1,description:'Командный интерфейс'},
-  {id:'darkshop',title:'DarkShop',path:'shop://hardware',ram:1,description:'Комплектующие ПК'},
+  {id:'terminal',title:'Terminal',path:'terminal://shell',ram:1,description:'Обычный терминал (без плагинов)'},
+  {id:'phone-term',title:'Phone Term',path:'terminal://phone',ram:1,description:'Терминал взлома телефонов'},
+  {id:'server-term',title:'Server Term',path:'terminal://server',ram:1,description:'Терминал серверов (скоро)'},
+  {id:'darkshop',title:'DarkShop',path:'shop://market',ram:1,description:'Рынок данных'},
   {id:'browser',title:'Browser',path:'net://fictional-web',ram:2,description:'Вымышленный интернет'},
-  {id:'forge',title:'NULForge',path:'repo://plugins',ram:1,description:'Каталог игровых плагинов'},
-  {id:'map',title:'NullAtlas',path:'atlas://world',ram:2,description:'Карта игрового мира'},
-  {id:'mail',title:'N-Mail',path:'mail://inbox',ram:1,description:'Внутриигровая почта'},
-  {id:'blackwire',title:'BlackWire',path:'board://contracts',ram:1,description:'Биржа контрактов NPC'},
-  {id:'help',title:'Help / Docs',path:'docs://manual',ram:1,description:'Справка по игре'},
-  {id:'ide',title:'NBS IDE',path:'ide://workspace',ram:2,description:'Редактор игровых скриптов'},
-  {id:'phone',title:'Phone Lab',path:'phone://lab',ram:2,description:'Визуальное исследование телефонов'},
-  {id:'intel',title:'Intel',path:'intel://feed',ram:1,description:'Разведка, события, discovered'},
-  {id:'fbi',title:'FBI',path:'agency://fbi',ram:1,description:'Закрытый раздел'},
-  {id:'profile',title:'Профиль',path:'user://operator',ram:1,description:'Оператор и прогресс'},
-  {id:'computer',title:'My Computer',path:'system://hardware',ram:1,description:'Компьютер и файлы'}
+  {id:'forge',title:'NULForge',path:'repo://plugins',ram:1,description:'Каталог плагинов'},
+  {id:'map',title:'NullAtlas',path:'atlas://world',ram:2,description:'Карта сетей'},
+  {id:'mail',title:'N-Mail',path:'mail://inbox',ram:1,description:'Почта'},
+  {id:'blackwire',title:'BlackWire',path:'board://contracts',ram:1,description:'Контракты'},
+  {id:'help',title:'Help',path:'docs://manual',ram:1,description:'Справка'},
+  {id:'ide',title:'NBS IDE',path:'ide://workspace',ram:2,description:'Редактор'},
+  {id:'phone',title:'Phone Lab',path:'phone://lab',ram:2,description:'Исследование телефонов'},
+  {id:'intel',title:'Intel',path:'intel://feed',ram:1,description:'Разведка'},
+  {id:'fbi',title:'FBI',path:'gov://fbi',ram:1,description:'Закрытый канал'},
+  {id:'profile',title:'Профиль',path:'user://profile',ram:1,description:'Оператор'},
+  {id:'computer',title:'My Computer',path:'sys://pc',ram:1,description:'Система'},
 ];
 const state = {opened:new Map(),z:20,drag:null,active:null,game:null,provider:'LOCAL SAVE',saveWarning:'',saveTimer:null,terminals:new Map(),termSeq:0,browserTabs:[],selectedMail:null,selectedFileId:null,selectedMissionId:null,editorText:'',editorName:'mission_report',nbsOutput:'Поддерживается только фиксированный список игровых деклараций.',modalConfirm:null,bootDone:false,persisting:false,persistPending:false,saveBlocked:false};
 
-function icon(id,cls='') { return `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true">${svg[id]||svg.help}</svg>`; }
+function icon(id,cls='') {
+  if (id === 'fbi') {
+    return `<img class="app-icon-img ${cls}" src="fbi.png" alt="" draggable="false" style="width:22px;height:22px;object-fit:contain;filter:grayscale(1) brightness(1.1);">`;
+  }
+  return `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true">${svg[id]||svg.help}</svg>`;
+}
 function appInfo(id) { return APPS.find(a=>a.id===id); }
 function fmt(n) { return new Intl.NumberFormat('ru-RU').format(Math.floor(Number(n)||0)); }
 function formatDate(ts) { return new Intl.DateTimeFormat('ru-RU',{day:'2-digit',month:'short',year:'numeric'}).format(new Date(ts)); }
@@ -107,13 +114,7 @@ function updateClock() {
 }
 function renderDesktopIcons() {
   const icons = $('desktopIcons');
-  icons.hidden = false;
-  icons.innerHTML = APPS.map(a => `
-    <button class="desktop-icon" type="button" data-action="open-app" data-app="${a.id}" title="${esc(a.title)}">
-      <span class="desktop-icon-symbol">${icon(a.id)}</span>
-      <span>${esc(a.title)}</span>
-    </button>
-  `).join('');
+  if (icons) { icons.hidden = true; icons.innerHTML = ''; }
   $('startMenuApps').innerHTML = APPS.map(a => `
     <button class="start-app" type="button" data-action="open-app" data-app="${a.id}">
       <span class="start-app-icon">${icon(a.id)}</span>
@@ -447,12 +448,18 @@ function printNeofetch(termId) {
 }
 
 
-function createTerminalSession(){
+function createTerminalSession(mode){
+  if (!mode) mode = 'vanilla';
   const html = typeof buildNeofetchHtml === 'function' ? buildNeofetchHtml(state.game) : '';
+  const hint = mode === 'phone'
+    ? 'Phone Term · plugins · run net link · run phone access'
+    : mode === 'server'
+      ? 'Server Term · серверные плагины скоро'
+      : 'Terminal · плагины отключены';
   const lines = html
-    ? [{ text: '__NEOFETCH__', type: 'html', html }, { text: 'Type help · plugins · run <plugin-id> · neofetch', type: 'muted' }]
-    : [{ text: 'NULLBYTE OS', type: 'green' }];
-  return { lines, plugin: null, busy: false, scrollPin: true };
+    ? [{ text: '__NEOFETCH__', type: 'html', html }, { text: hint, type: 'muted' }]
+    : [{ text: 'NULLBYTE OS · ' + mode, type: 'green' }, { text: hint, type: 'muted' }];
+  return { mode: mode, lines: lines, plugin: null, busy: false, scrollPin: true };
 }
 
 
@@ -559,10 +566,12 @@ function layoutNewWindow(area, width, height) {
 
 function openApp(id) {
   // Each Terminal / Browser launch creates a NEW independent window.
-  if(id==='terminal'){
+  if(id==='terminal' || id==='phone-term' || id==='server-term'){
+    const mode = id==='phone-term' ? 'phone' : id==='server-term' ? 'server' : 'vanilla';
     state.termSeq+=1;
-    id=`term-${state.termSeq}`;
-    state.terminals.set(id,createTerminalSession());
+    const newId=`term-${state.termSeq}`;
+    state.terminals.set(newId, createTerminalSession(mode));
+    id = newId;
   }
   if(id==='browser'){
     state.browserSeq=(state.browserSeq||0)+1;
@@ -570,7 +579,11 @@ function openApp(id) {
     if(!state.browserSessions) state.browserSessions=new Map();
     state.browserSessions.set(id,{tabs:[{id:'tab_start',siteId:'',page:'start',title:'Новая вкладка',history:[{page:'start'}],histIdx:0}],active:0});
   }
-  const baseId=isTerminalId(id)?'terminal':(isBrowserId(id)?'browser':id);
+  const baseId=isTerminalId(id)
+    ? (state.terminals.get(id)?.mode === 'phone' ? 'phone-term'
+      : state.terminals.get(id)?.mode === 'server' ? 'server-term'
+      : 'terminal')
+    : (isBrowserId(id)?'browser':id);
   const app=appInfo(baseId);if(!app)return;
   const existing=state.opened.get(id);
   if(existing){existing.minimized=false;focusWindow(id);return;}
@@ -582,14 +595,19 @@ function openApp(id) {
   let width=isTerm
     ? Math.min(560, Math.max(300, Math.floor(area.clientWidth*0.42)))
     : isPhone
-      ? Math.max(280, area.clientWidth - 16)
+      ? Math.min(360, Math.max(280, Math.floor(area.clientWidth * 0.55)))
       : Math.min(880,Math.max(Math.min(320,area.clientWidth-12),area.clientWidth-42));
   let height=isTerm
     ? Math.min(360, Math.max(220, Math.floor(area.clientHeight*0.42)))
     : isPhone
-      ? Math.max(400, area.clientHeight - 56)
+      ? Math.min(560, Math.max(380, Math.floor(area.clientHeight * 0.62)))
       : Math.min(650,Math.max(Math.min(290,area.clientHeight-12),area.clientHeight-42));
-    const title=isTerm?`Terminal ${id.replace('term-','#')}`:(isBrowserId(id)?`Browser ${id.replace('browser-','#')}`:app.title);
+    const termMode = isTerm ? (state.terminals.get(id)?.mode || 'vanilla') : '';
+  const title=isTerm
+    ? (termMode==='phone' ? `Phone Term #${id.replace('term-','')}`
+      : termMode==='server' ? `Server Term #${id.replace('term-','')}`
+      : `Terminal #${id.replace('term-','')}`)
+    : (isBrowserId(id)?`Browser ${id.replace('browser-','#')}`:app.title);
   const path=isTerm?`tty://${id}`:(isBrowserId(id)?`net://${id}`:app.path);
   const place = layoutNewWindow(area, width, height);
   width = place.width; height = place.height;
@@ -649,7 +667,8 @@ function wireWindow(id,element) {
   });
   const bar=element.querySelector('.window-bar');
   bar.addEventListener('pointerdown',e=>{
-    if(e.target.closest('.window-controls')||state.opened.get(id)?.maximized||e.button!==0)return;
+    if(e.target.closest('.window-controls')||state.opened.get(id)?.maximized)return;
+    if(e.button!=null && e.button!==0)return;
     if(e.target.closest('input,textarea,button'))return;
     const rect=element.getBoundingClientRect(),workspace=$('desktopWorkspace').getBoundingClientRect();
     state.drag={id,pointerId:e.pointerId,dx:e.clientX-rect.left,dy:e.clientY-rect.top,workspace};element.classList.add('is-dragging');
@@ -819,13 +838,17 @@ function wireAppContent(id,el) {
           const to=(f.elements.to?.value||'').trim();
           const amount=Number(f.elements.amount?.value||0);
           const sid=state.bankSessionId||state.game.bank?.sessionId;
-          if(!sid){toast('Нет сессии','error');return;}
-          if(!to){toast('Укажи счёт получателя','error');return;}
-          const r=bankTransfer(state.game,sid,to,amount);
-          if(!r.ok){toast(r.reason||'Ошибка перевода','error');return;}
-          toast(r.message||'Перевод выполнен','success');
+          if(!sid){toast('Нет сессии — войди в кабинет заново','error');return;}
+          if(!to){toast('Укажи счёт получателя или свой wallet','error');return;}
+          if(!amount||amount<=0){toast('Укажи сумму','error');return;}
+          let r;
+          try { r=bankTransfer(state.game,sid,to,amount); }
+          catch(err){ toast(String(err.message||err),'error'); return; }
+          if(!r||!r.ok){toast((r&&r.reason)||'Ошибка перевода','error');return;}
+          toast(r.message||('Перевод '+amount+' CR выполнен'),'success');
           scheduleSave();
-          renderWindow(id);
+          try { renderWindow(id); } catch(e){}
+          try { refreshOpenApps(['bank','profile','browser']); } catch(e){}
         }
       });
     });
@@ -1180,7 +1203,7 @@ function renderSitePage(g, site, page, progress) {
   const p = page || 'home';
 
   if (locked) {
-    return `<div class="site-page site-error"><div class="site-error-code">503</div><h2>Service Recovering</h2><p>${esc(site.domain)} временно недоступен · recovery ${humanLeft(site.recoveryAt - Date.now())}</p></div>`;
+    return `<div class="site-page site-error kind-error"><div class="site-error-code">503</div><h2>Service Recovering</h2><p>${esc(site.domain)} временно недоступен · recovery ${humanLeft(site.recoveryAt - Date.now())}</p></div>`;
   }
 
   // Nav helper
@@ -1214,16 +1237,16 @@ function renderSitePage(g, site, page, progress) {
         peopleHtml = rows.slice(0, 18).map(pe => `<div class="nt-person"><div><b>${esc(pe.name)}</b><small>${esc(pe.tick)} · ${esc(pe.region)}</small></div><span>${Number(pe.stake).toLocaleString('ru-RU')} CR</span></div>`).join('');
       } catch(e) { peopleHtml = (tr.people||[]).map(pe=>`<div class="nt-person"><div><b>${esc(pe.name)}</b></div><span>${pe.stake}</span></div>`).join(''); }
 
-      return `<div class="site-page site-trading"><header class="site-hero trading"><div class="site-brand">NULL<span>TRADING</span></div>${navT}</header>
+      return `<div class="site-page site-trading kind-trading"><header class="site-hero trading"><div class="site-brand">NULL<span>TRADING</span></div>${navT}</header>
         <div class="site-body"><h2>Люди</h2><div class="nt-people">${peopleHtml}</div></div></div>`;
     }
     if (p === 'profile') {
-      return `<div class="site-page site-trading"><header class="site-hero trading"><div class="site-brand">NULL<span>TRADING</span></div>${navT}</header>
+      return `<div class="site-page site-trading kind-trading"><header class="site-hero trading"><div class="site-brand">NULL<span>TRADING</span></div>${navT}</header>
         <div class="site-body"><h2>Профиль</h2>
         <div class="notice warning">В разработке. Портфель и сделки появятся позже.</div>
         <p class="muted">Сейчас доступны только котировки и список участников.</p></div></div>`;
     }
-    return `<div class="site-page site-trading"><header class="site-hero trading"><div class="site-brand">NULL<span>TRADING</span></div>${navT}</header>
+    return `<div class="site-page site-trading kind-trading"><header class="site-hero trading"><div class="site-brand">NULL<span>TRADING</span></div>${navT}</header>
       <div class="site-body">
         <h1>Биржа Trade</h1>
         <p class="muted">NULLBYTE · 44weee · tunnel</p>
@@ -1239,19 +1262,19 @@ function renderSitePage(g, site, page, progress) {
       { n: 'Order VM-204 (ledger)', price: '—' }
     ];
     if (p === 'catalog') {
-      return `<div class="site-page site-shop"><header class="site-hero shop"><div class="site-brand">VOLT<span>MARKET</span></div>${nav([['home','Главная'],['catalog','Каталог'],['orders','Заказы'],['about','О нас']])}</header>
+      return `<div class="site-page site-shop kind-shop"><header class="site-hero shop"><div class="site-brand">VOLT<span>MARKET</span></div>${nav([['home','Главная'],['catalog','Каталог'],['orders','Заказы'],['about','О нас']])}</header>
         <div class="site-body"><h2>Каталог</h2><div class="shop-grid">${products.map(x=>`<div class="shop-card"><strong>${esc(x.n)}</strong><span>${x.price=== '—' ? 'ledger' : x.price+' CR'}</span></div>`).join('')}</div>
         <p class="site-note">Публичная витрина. Глубокие записи заказа — через операции в Terminal.</p></div></div>`;
     }
     if (p === 'orders') {
-      return `<div class="site-page site-shop"><header class="site-hero shop"><div class="site-brand">VOLT<span>MARKET</span></div>${nav([['home','Главная'],['catalog','Каталог'],['orders','Заказы'],['about','О нас']])}</header>
+      return `<div class="site-page site-shop kind-shop"><header class="site-hero shop"><div class="site-brand">VOLT<span>MARKET</span></div>${nav([['home','Главная'],['catalog','Каталог'],['orders','Заказы'],['about','О нас']])}</header>
         <div class="site-body"><h2>Заказы</h2>
         <div class="data-table"><div class="dt-row head"><span>ID</span><span>Статус</span><span>Сумма</span></div>
         <div class="dt-row"><span>VM-204</span><span>${access?'visible':'restricted'}</span><span>···</span></div>
         <div class="dt-row"><span>VM-118</span><span>shipped</span><span>90 CR</span></div></div>
         <p class="site-note">Артефакт CATALOG-B7 связан с VM-204.</p></div></div>`;
     }
-    return `<div class="site-page site-shop"><header class="site-hero shop"><div class="site-brand">VOLT<span>MARKET</span></div>${nav([['home','Главная'],['catalog','Каталог'],['orders','Заказы'],['about','О нас']])}</header>
+    return `<div class="site-page site-shop kind-shop"><header class="site-hero shop"><div class="site-brand">VOLT<span>MARKET</span></div>${nav([['home','Главная'],['catalog','Каталог'],['orders','Заказы'],['about','О нас']])}</header>
       <div class="site-body"><h1>Электроника и комплектующие</h1><p>${esc(site.description)}</p>
       <div class="shop-grid">${products.slice(0,3).map(x=>`<div class="shop-card"><strong>${esc(x.n)}</strong><span>${x.price} CR</span></div>`).join('')}</div>
       <p class="site-meta">Регион: ${esc(site.region)} · sec ${site.security}/5</p>
@@ -1268,7 +1291,7 @@ function renderSitePage(g, site, page, progress) {
       p = 'cabinet';
     }
     if (!acc && (p === 'login' || p === 'cabinet' || p === 'transfer')) {
-      return `<div class="site-page site-bank"><header class="site-hero bank"><div class="site-brand">ASTER <span>UNION</span></div>${nav([['home','Обзор'],['login','Вход'],['security','Безопасность']])}</header>
+      return `<div class="site-page site-bank kind-bank"><header class="site-hero bank"><div class="site-brand">ASTER <span>UNION</span></div>${nav([['home','Обзор'],['login','Вход'],['security','Безопасность']])}</header>
         <div class="site-body"><h2>Вход в кабинет</h2>
         <p class="muted">Логин и пароль из SMS взломанного телефона (hard+ — всегда в переписке).</p>
         <form class="bank-login-form" data-action-form="bank-login">
@@ -1280,16 +1303,16 @@ function renderSitePage(g, site, page, progress) {
     }
     if (acc) {
       const tx = (acc.transactions||[]).slice(0,8);
-      return `<div class="site-page site-bank"><header class="site-hero bank"><div class="site-brand">ASTER <span>UNION</span></div>${nav([['home','Обзор'],['cabinet','Кабинет'],['transfer','Перевод']])}</header>
+      return `<div class="site-page site-bank kind-bank"><header class="site-hero bank"><div class="site-brand">ASTER <span>UNION</span></div>${nav([['home','Обзор'],['cabinet','Кабинет'],['transfer','Перевод']])}</header>
         <div class="site-body"><h2>Кабинет</h2>
         <div class="bank-dash"><div class="bank-tile"><span>Счёт</span><strong>${esc(acc.accountNo)}</strong></div><div class="bank-tile"><span>Баланс</span><strong>${fmt(acc.balance)} CR</strong></div><div class="bank-tile"><span>Сессия</span><strong>ACTIVE</strong></div></div>
-        ${p==='transfer'?`<form class="bank-login-form" data-action-form="bank-transfer"><label>Счёт получателя<input class="field" name="to" placeholder="NB-… wallet или AST-…"></label><label>Сумма<input class="field" name="amount" type="number" min="1"></label><button class="btn primary" type="submit">ПЕРЕВЕСТИ</button></form>`:''}
+        ${p==='transfer'?`<form class="bank-login-form" data-action-form="bank-transfer"><p class="muted small">Твой wallet: <b>${esc(g.player?.walletId||'—')}</b> — вставь его, чтобы вывести CR себе.</p><label>Счёт / wallet<input class="field" name="to" placeholder="${esc(g.player?.walletId||'wallet или AST-…')}"></label><label>Сумма (CR)<input class="field" name="amount" type="number" min="1" step="1"></label><button class="btn primary" type="submit">ПЕРЕВЕСТИ</button></form>`:''}
         <h3>История</h3>
         ${tx.map(t=>`<div class="forum-row"><strong>${t.type} ${t.amount}</strong><small>${t.to||t.from||''} · ${formatTime(t.at)}</small></div>`).join('')}
         <div class="btn-row section-gap"><button class="btn tiny" data-action="bank-logout">ВЫЙТИ</button></div>
         </div></div>`;
     }
-    return `<div class="site-page site-bank"><header class="site-hero bank"><div class="site-brand">ASTER <span>UNION</span></div>${nav([['home','Обзор'],['login','Вход'],['security','Безопасность']])}</header>
+    return `<div class="site-page site-bank kind-bank"><header class="site-hero bank"><div class="site-brand">ASTER <span>UNION</span></div>${nav([['home','Обзор'],['login','Вход'],['security','Безопасность']])}</header>
       <div class="site-body">
         <div class="bank-dash"><div class="bank-tile"><span>Контур</span><strong>NPC ACCOUNTS</strong></div><div class="bank-tile"><span>Защита</span><strong>${site.security}/5</strong></div><div class="bank-tile"><span>Статус</span><strong>${site.state}</strong></div></div>
         <p>Aster Union — внутриигровой банк. Счета NPC, переводы, ограниченная сессия.</p>
@@ -1304,18 +1327,18 @@ function renderSitePage(g, site, page, progress) {
       { t: 'Сигналы с Площади Маяк', by: 'harbor_ops', n: 8 }
     ];
     if (p === 'threads') {
-      return `<div class="site-page site-forum"><header class="site-hero forum"><div class="site-brand">COBALT <span>FORUM</span></div>${nav([['home','Лента'],['threads','Темы'],['users','Участники']])}</header>
+      return `<div class="site-page site-forum kind-forum"><header class="site-hero forum"><div class="site-brand">COBALT <span>FORUM</span></div>${nav([['home','Лента'],['threads','Темы'],['users','Участники']])}</header>
         <div class="site-body"><h2>Темы</h2>${threads.map(th=>`<div class="forum-row"><strong>${esc(th.t)}</strong><small>${esc(th.by)} · ${th.n} msg</small></div>`).join('')}
         <p class="site-note">Полные тексты сообщений — через контракт / Terminal export.</p></div></div>`;
     }
-    return `<div class="site-page site-forum"><header class="site-hero forum"><div class="site-brand">COBALT <span>FORUM</span></div>${nav([['home','Лента'],['threads','Темы'],['users','Участники']])}</header>
+    return `<div class="site-page site-forum kind-forum"><header class="site-hero forum"><div class="site-brand">COBALT <span>FORUM</span></div>${nav([['home','Лента'],['threads','Темы'],['users','Участники']])}</header>
       <div class="site-body"><h1>Сообщество Cobalt</h1><p>${esc(site.description)}</p>
       ${threads.slice(0,2).map(th=>`<div class="forum-row"><strong>${esc(th.t)}</strong><small>${esc(th.by)}</small></div>`).join('')}
       </div></div>`;
   }
 
   if (site.kind === 'database') {
-    return `<div class="site-page site-gov"><header class="site-hero gov"><div class="site-brand">CIVIC <span>RECORDS</span></div>${nav([['home','Портал'],['registry','Реестр'],['docs','Документы']])}</header>
+    return `<div class="site-page site-gov kind-gov"><header class="site-hero gov"><div class="site-brand">CIVIC <span>RECORDS</span></div>${nav([['home','Портал'],['registry','Реестр'],['docs','Документы']])}</header>
       <div class="site-body">
         <h1>Муниципальный реестр</h1>
         <p>Официальный интерфейс. Записи CR-* доступны операторам с Virtual DB Reader.</p>
@@ -1327,7 +1350,7 @@ function renderSitePage(g, site, page, progress) {
   }
 
   if (site.kind === 'utility') {
-    return `<div class="site-page site-util"><header class="site-hero util"><div class="site-brand">GRID<span>WORKS</span></div>${nav([['home','Статус'],['logs','Журналы'],['nodes','Узлы']])}</header>
+    return `<div class="site-page site-util kind-util"><header class="site-hero util"><div class="site-brand">GRID<span>WORKS</span></div>${nav([['home','Статус'],['logs','Журналы'],['nodes','Узлы']])}</header>
       <div class="site-body"><h1>Сетевой контроллер</h1>
       <div class="util-meters"><div><span>Load</span><b>${30+site.security*8}%</b></div><div><span>Nodes</span><b>14</b></div><div><span>Journal</span><b>GW-11</b></div></div>
       <p>${esc(site.description)}</p>
@@ -1335,7 +1358,7 @@ function renderSitePage(g, site, page, progress) {
   }
 
   if (site.kind === 'auto') {
-    return `<div class="site-page site-auto"><header class="site-hero auto"><div class="site-brand">NEON <span>MOTORS</span></div>${nav([['home','Сервис'],['cards','Карточки'],['about','О сервисе']])}</header>
+    return `<div class="site-page site-auto kind-auto"><header class="site-hero auto"><div class="site-brand">NEON <span>MOTORS</span></div>${nav([['home','Сервис'],['cards','Карточки'],['about','О сервисе']])}</header>
       <div class="site-body"><h1>Сервисные карточки</h1>
       <div class="auto-card"><strong>NM-88</strong><span>VIN-SIM-88</span><small>status: workshop</small></div>
       <div class="auto-card"><strong>NM-12</strong><span>VIN-SIM-12</span><small>status: ready</small></div>
@@ -1343,21 +1366,21 @@ function renderSitePage(g, site, page, progress) {
   }
 
   if (site.kind === 'device') {
-    return `<div class="site-page site-device"><header class="site-hero device"><div class="site-brand">POCKET <span>MOBILE</span></div>${nav([['home','Устройство'],['apps','Приложения']])}</header>
+    return `<div class="site-page site-device kind-device"><header class="site-hero device"><div class="site-brand">POCKET <span>MOBILE</span></div>${nav([['home','Устройство'],['apps','Приложения']])}</header>
       <div class="site-body"><div class="phone-frame"><div class="phone-screen"><strong>PM-22</strong><small>demo handset</small><p>Сеть: NorthWifi</p></div></div>
       <p>${esc(site.description)}</p>
       <p class="site-note">Глубокий разбор — map-scanner forensics в Terminal.</p></div></div>`;
   }
 
   if (site.kind === 'wifi') {
-    return `<div class="site-page site-wifi"><header class="site-hero wifi"><div class="site-brand">NORTH <span>WIFI</span></div>${nav([['home','Точка'],['status','Статус']])}</header>
+    return `<div class="site-page site-wifi kind-wifi"><header class="site-hero wifi"><div class="site-brand">NORTH <span>WIFI</span></div>${nav([['home','Точка'],['status','Статус']])}</header>
       <div class="site-body"><h1>AP-05 · Площадь Маяк</h1>
       <div class="wifi-panel"><span>SSID</span><strong>NorthWifi-AP05</strong><span>Signal</span><strong>-48 dBm</strong><span>Clients</span><strong>6</strong></div>
       <p class="site-note">Параметры точки экспортируются контрактом.</p></div></div>`;
   }
 
   // generic
-  return `<div class="site-page site-generic"><header class="site-hero"><div class="site-brand">${esc(site.title)}</div></header>
+  return `<div class="site-page site-generic kind-generic"><header class="site-hero"><div class="site-brand">${esc(site.title)}</div></header>
     <div class="site-body"><p>${esc(site.description)}</p><p class="site-meta">${esc(site.domain)} · ${esc(site.kind)} · sec ${site.security}</p></div></div>`;
 }
 
@@ -1727,9 +1750,20 @@ async function runTerminalCommand(termId, raw) {
     return;
   }
   if (c0 === 'plugins' || c0 === 'plugin') {
+    const term = getTerm(termId);
+    const mode = term?.mode || 'vanilla';
+    if (mode === 'vanilla') {
+      termAdd(termId, 'Обычный Terminal: плагины отключены. Используй Phone Term / Server Term.', 'warn');
+      return;
+    }
+    if (mode === 'server') {
+      termAdd(termId, 'Server Term: серверные плагины пока в разработке.', 'warn');
+      return;
+    }
     const installed = new Set((state.game.computer && state.game.computer.installedPlugins) || []);
-    const all = (typeof PLUGINS !== 'undefined' && Array.isArray(PLUGINS)) ? PLUGINS : [];
-    termAdd(termId, '┌─ PLUGINS ─────────────────────────', 'green');
+    const all = ((typeof PLUGINS !== 'undefined' && Array.isArray(PLUGINS)) ? PLUGINS : [])
+      .filter(p => !p.terminal || p.terminal === mode || (mode === 'phone' && p.category === 'Mobile Operations'));
+    termAdd(termId, '┌─ PHONE PLUGINS ───────────────────', 'green');
     termAdd(termId, '│ id                 status     name', 'muted');
     termAdd(termId, '├────────────────────────────────────', 'muted');
     const rows = all.length ? all : [...installed].map(id => ({ id, name: id }));
@@ -1755,6 +1789,9 @@ async function runTerminalCommand(termId, raw) {
     return;
   }
   if (c0 === 'run' || c0 === 'exec') {
+    const tmode = (getTerm(termId)?.mode) || 'vanilla';
+    if (tmode === 'vanilla') { termAdd(termId, 'Плагины недоступны в обычном Terminal. Открой Phone Term.', 'error'); return; }
+    if (tmode === 'server') { termAdd(termId, 'Серверные плагины в разработке.', 'error'); return; }
     if (!argRest) { termAdd(termId, 'usage: run <plugin-id>   (пример: run net link)', 'error'); return; }
     const realId = resolvePluginId(argRest) || resolvePluginId(arg1) || argRest.replace(/\s+/g, '-').toLowerCase();
     const installedList = state.game.computer.installedPlugins || [];
@@ -2073,94 +2110,81 @@ async function animatePluginBoot(termId, pluginId) {
 async function animateWorkTimed(termId, pluginId, totalMs, mode) {
   const start = performance.now();
   const regions = ['BAYS','MIDT','IRON','SOUT','OAKR','SHAD'];
+  const verbs = ['probe','sniff','handshake','resolve','fingerprint','correlate','decrypt-hdr','map-route','ttl-check','arp-scan'];
   const randMac = () => [...Array(6)].map(() => ((Math.random()*256)|0).toString(16).padStart(2,'0')).join(':');
-  const randPhone = () => `PH-${regions[(Math.random()*regions.length)|0]}-${String((Math.random()*550)|0).padStart(4,'0')}`;
-  const randIp = () => `172.16.${(Math.random()*40|0)}.${(1+Math.random()*250|0)}`;
-  const randIpPub = () => `10.0.${(Math.random()*20|0)}.${(1+Math.random()*250|0)}`;
-  const randHex = (n=6) => [...Array(n)].map(() => ((Math.random()*16)|0).toString(16)).join('');
+  const randPhone = () => 'PH-' + regions[(Math.random()*regions.length)|0] + '-' + String((Math.random()*550)|0).padStart(4,'0');
+  const randIp = () => '10.' + ((Math.random()*30)|0) + '.' + ((Math.random()*200)|0) + '.' + (1+((Math.random()*250)|0));
+  const randIpPub = () => '172.16.' + ((Math.random()*20)|0) + '.' + (1+((Math.random()*250)|0));
+  const randHex = (n=8) => [...Array(n)].map(() => ((Math.random()*16)|0).toString(16)).join('');
   const randBar = (pct) => {
-    const f = Math.max(0, Math.min(20, Math.round(pct/5)));
-    return '█'.repeat(f) + '░'.repeat(20-f);
+    const f = Math.max(0, Math.min(24, Math.round(pct/4.16)));
+    return '[' + '\u2588'.repeat(f) + '\u2591'.repeat(24-f) + ']';
   };
-  const randPin = () => String(1000 + ((Math.random()*9000)|0));
-
+  const glitch = () => {
+    const chars = '01\u2591\u2592\u2593\u2588/\\<>|#*';
+    return [...Array(12+((Math.random()*18)|0))].map(() => chars[(Math.random()*chars.length)|0]).join('');
+  };
   const titles = {
-    'net-link': 'NET LINK · connect bridge',
-    'net-analyzer': 'NET ANALYZER · deep sweep',
-    'phone-access': mode === 'attack' ? 'PHONE ACCESS · brute PIN' : mode === 'open' ? 'PHONE ACCESS · device link' : 'PHONE ACCESS · work'
+    'net-link': 'NET LINK \u00b7 mesh bridge',
+    'net-analyzer': mode === 'scan' ? 'NET ANALYZER \u00b7 DEEP SWEEP' : 'NET ANALYZER \u00b7 work',
+    'phone-access': mode === 'attack' ? 'PHONE ACCESS \u00b7 BRUTE SEQUENCE' : mode === 'open' ? 'PHONE ACCESS \u00b7 device link' : 'PHONE ACCESS \u00b7 work'
   };
-  termAdd(termId, `┌─ ${titles[pluginId] || pluginId}`, 'green');
-  let step = 0;
-  while (performance.now() - start < totalMs) {
-    step++;
-    const elapsed = performance.now() - start;
-    const pct = Math.min(99, Math.round((elapsed / totalMs) * 100));
-
-    if (pluginId === 'net-link') {
-      const lines = [
-        `│ peer N0${1+(step%6)}  ${randIp()}:48101  rtt=${(5+Math.random()*20)|0}ms  ACTIVE`,
-        `│ hop  LOCAL → N0${1+(step%4)} → N0${2+(step%3)}  path_lat=${(8+Math.random()*15)|0}ms`,
-        `│ bssid=${randMac()}  lease=${(Math.random()*40+10)|0}s  qos=STANDARD`,
-        `│ uplink ${(Math.random()*12+2).toFixed(2)} Mbps  [${randBar(20+step*3)}]`,
-        `│ session ${randHex(8)}-${randHex(4)}  enc=AES-NULL`,
-        `│ AUTH handshake ${step}  nonce=0x${randHex(8)}`
-      ];
-      termAdd(termId, lines[step % lines.length], 'muted');
-      if (step % 3 === 0) termAdd(termId, `│ bridge ${pct}%  [${randBar(pct)}]`, 'blue');
-    } else if (pluginId === 'net-analyzer') {
-      const proto = ['TCP','UDP','ICMP','ARP','DNS'][step%5];
-      const lines = [
-        `│ ${String(23+(step%37)).padStart(2,'0')}:${String(40+(step%20)).padStart(2,'0')}:${String(step%60).padStart(2,'0')} ${proto}  ${randIpPub()} → ${randIp()}`,
-        `│ ${randPhone()}  rssi=-${40+((Math.random()*45)|0)}  mac=${randMac()}`,
-        `│ TOPO  node ${randIpPub()}  label=USER-${10+(step%90)}  L3`,
-        `│ DPI  flag=${['SYN','ACK','FIN','RST','DATA'][step%5]}  len=${40+((Math.random()*1400)|0)}`,
-        `│ registry idx=${(step*17)%550}  hash=0x${randHex(6)}`,
-        `│ BUFFER ${Math.min(1024, step*48)}/1024  FILTER=ANY`
-      ];
-      termAdd(termId, lines[step % lines.length], 'muted');
-      if (step % 4 === 0) termAdd(termId, `│ SCAN ${pct}%  [${randBar(pct)}]  devices≈${Math.min(250, step*9)}`, 'blue');
-    } else if (pluginId === 'phone-access' && mode === 'attack') {
-      const tryPin = randPin();
-      const lines = [
-        `│ brute  try=${tryPin}  entropy=${(Math.random()*8+1).toFixed(2)}  batch=${1000+((Math.random()*8000)|0)}`,
-        `│ dict  wordlist=${['rock','null','mesh','grid','pulse'][step%5]}  hit=0`,
-        `│ mask  ????  cand=${(Math.random()*9999)|0}  gpu_kernel=pin4`,
-        `│ side-channel  jitter=${((Math.random()*12)+1).toFixed(1)}ms  sample=${step}`,
-        `│ oracle  resp=0x${randHex(4)}  noise=${(Math.random()*100)|0}%`
-      ];
-      termAdd(termId, lines[step % lines.length], 'muted');
-      if (step % 2 === 0) {
-        const errs = [
-          `│ ! DEFENSE reject pin ${tryPin}`,
-          `│ ! watchdog tick 0x${randHex(6)}`,
-          `│ ! rate-limit backoff ${((Math.random()*400)|0)}ms`,
-          `│ ! integrity mismatch block=${step}`,
-          `│ ! crypto noise floor`
-        ];
-        termAdd(termId, errs[step % errs.length], 'error');
-      }
-      if (step % 4 === 0) termAdd(termId, `│ CRACK ${pct}%  [${randBar(pct)}]  candidates≈${step*240}`, 'blue');
-    } else if (pluginId === 'phone-access' && mode === 'open') {
-      const lines = [
-        `│ link  target=${randPhone()}  channel=ENC`,
-        `│ signal  ${(Math.random()*5+1)|0}/5  rssi=-${30+((Math.random()*40)|0)} dBm`,
-        `│ profile  model=handset  os=vOS  ip=${randIp()}`,
-        `│ auth  state=HANDSHAKE  token=0x${randHex(8)}`,
-        `│ tunnel  hop=${1+(step%3)}  rtt=${(4+Math.random()*18)|0}ms`,
-        `│ vault  session=${randHex(4)}…${randHex(4)}  ttl=300s`
-      ];
-      termAdd(termId, lines[step % lines.length], 'muted');
-      if (step % 2 === 0) termAdd(termId, `│ LINK ${pct}%  [${randBar(pct)}]`, 'blue');
-    } else if (pluginId === 'phone-access') {
-      termAdd(termId, `│ probe surface=${['lock','svc','fs','ipc','radio'][step%5]}  0x${randHex(6)}`, 'muted');
-    } else {
-      termAdd(termId, `│ · working ${pct}%`, 'muted');
-    }
-    await sleep(Math.max(70, totalMs / 40));
+  const title = titles[pluginId] || String(pluginId).toUpperCase();
+  termAdd(termId, '', '');
+  termAdd(termId, '\u2554' + '\u2550'.repeat(40) + '\u2557', 'green');
+  termAdd(termId, '\u2551  ' + (title + '                                        ').slice(0, 38) + '\u2551', 'green');
+  termAdd(termId, '\u255a' + '\u2550'.repeat(40) + '\u255d', 'green');
+  if (pluginId === 'net-analyzer' || mode === 'scan') {
+    termAdd(termId, '  init modules: radio \u00b7 dhcp \u00b7 arp \u00b7 ssid-db \u00b7 geo-mesh', 'muted');
   }
-  termAdd(termId, `│ [${'█'.repeat(20)}] 100%`, 'green');
-  termAdd(termId, `└─ READY`, 'green');
+  let lastPct = -1;
+  let tick = 0;
+  return new Promise(resolve => {
+    const step = () => {
+      const elapsed = performance.now() - start;
+      const pct = Math.min(100, (elapsed / Math.max(1, totalMs)) * 100);
+      tick++;
+      if (pluginId === 'net-analyzer' || mode === 'scan') {
+        if (tick % 2 === 0) {
+          const lines = [
+            '  > ' + verbs[(Math.random()*verbs.length)|0] + ' ' + randIp() + '  ttl=' + (32+((Math.random()*30)|0)) + '  ' + glitch(),
+            '  > MAC ' + randMac() + '  \u2192  node ' + randPhone() + '  rssi=-' + (40+((Math.random()*50)|0)) + 'dBm',
+            '  > SSID mesh-' + regions[(Math.random()*regions.length)|0].toLowerCase() + '-' + randHex(3) + '  ch=' + (1+((Math.random()*11)|0)),
+            '  > fingerprint 0x' + randHex(8) + '  entropy=' + (Math.random()).toFixed(3) + '  ' + randBar(pct),
+            '  > correlate session ' + randHex(4) + ':' + randHex(4) + '  hop=' + (1+((Math.random()*6)|0)) + '  rtt=' + (Math.random()*40).toFixed(1) + 'ms',
+            '  > dhcp-lease ' + randIpPub() + '  vendor=NULLCORE  flags=0x' + randHex(2),
+            '  > dump frame #' + (1000+((Math.random()*9000)|0)) + '  len=' + (40+((Math.random()*400)|0)) + 'B  ' + glitch(),
+            '  > route ' + randIp() + ' \u2192 ' + randIpPub() + '  via mesh-gw-' + ((Math.random()*9)|0)
+          ];
+          termAdd(termId, lines[(Math.random()*lines.length)|0], Math.random() > 0.85 ? 'warn' : '');
+        }
+        if (Math.floor(pct / 12) > Math.floor(lastPct / 12)) {
+          termAdd(termId, '  ' + randBar(pct) + '  ' + (pct|0) + '%  collecting\u2026', 'green');
+        }
+      } else if (mode === 'attack') {
+        if (tick % 2 === 0) {
+          termAdd(termId, '  try PIN ****  candidate=' + (1000+((Math.random()*9000)|0)) + '  ' + glitch() + '  ' + randBar(pct), Math.random()>0.7?'warn':'');
+        }
+      } else if (pluginId === 'net-link' || mode === 'connect') {
+        if (tick % 3 === 0) {
+          termAdd(termId, '  handshake ' + randMac() + '  auth=OK  tunnel=' + randHex(6) + '  ' + randBar(pct), 'green');
+        }
+      } else if (tick % 3 === 0) {
+        termAdd(termId, '  work ' + randHex(6) + '  ' + randBar(pct) + '  ' + (pct|0) + '%', '');
+      }
+      lastPct = pct;
+      if (elapsed >= totalMs) {
+        termAdd(termId, '  ' + randBar(100) + '  100%', 'green');
+        termAdd(termId, '\u2714 ' + title + ' \u2014 complete', 'green');
+        resolve();
+        return;
+      }
+      setTimeout(step, 90 + Math.random() * 110);
+    };
+    step();
+  });
 }
+
 
 
 
@@ -2485,11 +2509,19 @@ function renderPhoneLab(g) {
     body = `<div class="nb-gal">${gal.map(x=>`<div class="nb-thumb"><span>${esc(x.title||'')}</span></div>`).join('')}</div>
       <button type="button" class="nb-action" data-action="phone-lab-export" data-kind="gallery" data-id="${esc(phone.id)}">SAVE GALLERY</button>`;
   } else if (tab === 'files') {
-    body = `<div class="nb-list">${files.map(f => `<div class="nb-card">
-        <div class="nb-card-top"><span class="nb-cyan">${esc(f.name)}</span><span class="nb-muted">${esc(f.kind)} · ${f.size}b</span></div>
-        <div class="nb-card-body">${esc((f.body||'').slice(0,120))}${(f.body||'').length>120?'…':''}</div>
-        <button type="button" class="nb-action tiny" data-action="phone-file-download" data-phone="${esc(phone.id)}" data-file="${esc(f.id)}">СКАЧАТЬ</button>
-      </div>`).join('')||'<div class="nb-empty">нет файлов</div>'}</div>`;
+    body = `<div class="nb-list">${files.map(f => {
+        const price = Number(f.base_price_cr != null ? f.base_price_cr : 0) || 0;
+        const rare = f.rarity || 'common';
+        const locked = f.encryption_state === 'locked';
+        const prev = (f.content_preview || f.body || '').slice(0, 140);
+        return `<div class="nb-card file-card">
+          <div class="nb-card-top"><span class="nb-cyan">${esc(f.file_name||f.name)}</span>
+            <span class="nb-muted">${esc(rare)} · ${price} CR</span></div>
+          <div class="nb-card-body muted small">${esc(f.file_type||f.kind||'file')}${locked?' · LOCKED':''}${f.integrity_state==='corrupted'?' · CORRUPTED':''} · ${esc(f.size||'')}</div>
+          <div class="nb-card-body">${esc(prev)}${prev.length>=140?'…':''}</div>
+          <button type="button" class="nb-action tiny" data-action="phone-file-download" data-phone="${esc(phone.id)}" data-file="${esc(f.id||f.instance_id)}">СКАЧАТЬ · ${price} CR</button>
+        </div>`;
+      }).join('')||'<div class="nb-empty">нет файлов</div>'}</div>`;
   } else {
     body = `<div class="nb-app-grid">
       <button type="button" class="nb-app" data-action="phone-lab-tab" data-tab="msgs"><span class="nb-app-ico nb-cyan">💬</span><label>MESSAGES</label></button>
@@ -2953,13 +2985,30 @@ function handleAction(action,el,ev) {
       if (!state.game.computer) state.game.computer = {};
       if (!Array.isArray(state.game.computer.files)) state.game.computer.files = [];
       const fid = 'dl_' + String(file.id || 'f') + '_' + Date.now().toString(36);
+      const price = Number(file.base_price_cr != null ? file.base_price_cr : file.price) || 0;
       state.game.computer.files.unshift({
         id: fid,
-        name: file.name || 'file.txt',
-        type: file.kind || 'file',
-        content: file.body || '',
-        body: file.body || '',
+        instance_id: file.instance_id || fid,
+        template_id: file.template_id || '',
+        name: file.file_name || file.name || 'file.txt',
+        file_name: file.file_name || file.name || 'file.txt',
+        type: file.file_type || file.kind || 'file',
+        kind: file.file_type || file.kind || 'file',
+        file_type: file.file_type || file.kind || 'file',
+        rarity: file.rarity || 'common',
+        base_price_cr: price,
+        content_preview: file.content_preview || (file.body || '').slice(0, 160),
+        content: file.body || file.plaintext_payload || '',
+        body: file.body || file.plaintext_payload || '',
+        plaintext_payload: file.plaintext_payload || file.body || '',
+        encryption_state: file.encryption_state || 'none',
+        integrity_state: file.integrity_state || 'full',
+        sale_state: 'owned',
+        individual_value_multiplier: 1,
         source: 'phone:' + phoneId,
+        phone_id: phoneId,
+        owner_name: file.owner_name || phone.ownerName || '',
+        owner_role: file.owner_role || phone.role || '',
         at: Date.now()
       });
       state.game.computer.files = state.game.computer.files.slice(0, 80);

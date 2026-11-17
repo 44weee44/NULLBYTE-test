@@ -218,34 +218,47 @@ export function expireBankSessions(state, now = Date.now()) {
 
 export function bankTransfer(state, sessionId, toAccountNo, amount) {
   const session = getBankSession(state, sessionId);
-  if (!session) return { ok: false, reason: 'Сессия недействительна или истекла.' };
+  if (!session) return { ok: false, reason: 'Сессия недействительна или истекла. Войди снова.' };
+  if (!state.npcWorld?.bankAccounts) return { ok: false, reason: 'Банк не инициализирован.' };
   const from = state.npcWorld.bankAccounts[session.accountId];
-  if (!from) return { ok: false, reason: 'Счёт не найден.' };
+  if (!from) return { ok: false, reason: 'Счёт отправителя не найден.' };
   amount = Math.floor(Number(amount));
   if (!Number.isFinite(amount) || amount <= 0) return { ok: false, reason: 'Некорректная сумма.' };
-  if (amount > from.balance) return { ok: false, reason: 'Недостаточно средств.' };
+  if (amount > from.balance) return { ok: false, reason: 'Недостаточно средств на счёте NPC (' + from.balance + ' CR).' };
 
-  // Find destination among known accounts or create from matching accountNo
-  let to = Object.values(state.npcWorld.bankAccounts).find(a => a.accountNo === toAccountNo);
-  if (!to) {
-    for (let i = 0; i < 300; i++) {
-      const n = generateNpc((hash32(toAccountNo) + i) % NPC_POOL_SIZE, state.meta?.seed || 'nb');
-      if (n.accountNo === toAccountNo) {
-        touchNpc(state, n.id);
-        to = state.npcWorld.bankAccounts[n.accountId];
+  const destRaw = String(toAccountNo || '').trim();
+  const dest = destRaw.toLowerCase();
+  if (!dest) return { ok: false, reason: 'Укажи счёт или wallet получателя.' };
+
+  const playerWallet = String(state.player?.walletId || '').trim();
+  const nick = String(state.player?.nickname || '').trim().toLowerCase();
+  const toPlayer = !!(
+    (playerWallet && dest === playerWallet.toLowerCase()) ||
+    dest === 'player' ||
+    (nick && dest === nick)
+  );
+
+  let to = Object.values(state.npcWorld.bankAccounts).find(a =>
+    String(a.accountNo || '').toLowerCase() === dest ||
+    String(a.login || '').toLowerCase() === dest
+  );
+  if (!to && !toPlayer) {
+    for (let k = 0; k < 400; k++) {
+      const npc = generateNpc((hash32(destRaw) + k) % NPC_POOL_SIZE, state.meta?.seed || 'nb');
+      if (String(npc.accountNo || '').toLowerCase() === dest || String(npc.login || '').toLowerCase() === dest) {
+        touchNpc(state, npc.id);
+        to = state.npcWorld.bankAccounts[npc.accountId];
         break;
       }
     }
   }
-  // Player operator wallet
-  const playerWallet = String(state.player?.walletId || '').trim();
-  const toPlayer = playerWallet && (toAccountNo === playerWallet || toAccountNo === 'player' || toAccountNo === state.player?.nickname);
-
-  if (!to && !toPlayer) return { ok: false, reason: 'Счёт получателя не найден. Укажи wallet игрока или accountNo.' };
+  if (!to && !toPlayer) {
+    return { ok: false, reason: 'Счёт получателя не найден. Укажи свой wallet (Aster Bank на рабочем столе) или accountNo NPC.' };
+  }
   if (to && to.id === from.id) return { ok: false, reason: 'Нельзя перевести на тот же счёт.' };
 
   if (!state.npcWorld.nextTxn) state.npcWorld.nextTxn = 1;
-  const txnId = `txn_${state.npcWorld.nextTxn++}`;
+  const txnId = 'txn_' + state.npcWorld.nextTxn++;
   const at = Date.now();
   from.balance -= amount;
   if (!from.transactions) from.transactions = [];
@@ -253,26 +266,25 @@ export function bankTransfer(state, sessionId, toAccountNo, amount) {
   if (toPlayer) {
     if (!state.economy) state.economy = { credits: 0, transactions: [] };
     state.economy.credits = (Number(state.economy.credits) || 0) + amount;
+    if (state.player) state.player.credits = state.economy.credits;
     state.economy.transactions = state.economy.transactions || [];
     state.economy.transactions.unshift({
-      id: txnId, type: 'income', amount, reason: 'Перевод с NPC-счёта ' + (from.login || ''), at, note: 'Aster transfer'
+      id: txnId, type: 'income', amount,
+      reason: 'Перевод с NPC-счёта ' + (from.login || from.accountNo || ''),
+      at, note: 'Aster transfer'
     });
-    from.transactions.unshift({ id: txnId, type: 'out', amount, to: playerWallet || 'player', at, status: 'ok' });
-    from.transactions = from.transactions.slice(0, 40);
-    return { ok: true, txnId, fromBalance: from.balance, toPlayer: true, message: `+${amount} CR на кошелёк оператора` };
+    if (state.player) state.player.totalEarned = (Number(state.player.totalEarned) || 0) + amount;
+    from.transactions.unshift({ id: txnId, type: 'out', amount, to: playerWallet || 'player', at, note: 'to operator' });
+    return { ok: true, message: 'Перевод ' + amount + ' CR на wallet оператора выполнен.', amount, to: playerWallet || 'player', newBalance: from.balance };
   }
 
-  to.balance += amount;
+  to.balance = (Number(to.balance) || 0) + amount;
   if (!to.transactions) to.transactions = [];
-  from.transactions.unshift({ id: txnId, type: 'out', amount, to: to.accountNo, at, status: 'ok' });
-  to.transactions.unshift({ id: txnId, type: 'in', amount, from: from.accountNo, at, status: 'ok' });
-  from.transactions = from.transactions.slice(0, 40);
-  to.transactions = to.transactions.slice(0, 40);
-  const npcFrom = state.npcWorld.instances[from.npcId] || {};
-  npcFrom.balance = from.balance;
-  state.npcWorld.instances[from.npcId] = { ...npcFrom, id: from.npcId };
-  return { ok: true, txnId, fromBalance: from.balance, toBalance: to.balance, message: 'Перевод выполнен' };
+  from.transactions.unshift({ id: txnId, type: 'out', amount, to: to.accountNo, at });
+  to.transactions.unshift({ id: txnId, type: 'in', amount, from: from.accountNo, at });
+  return { ok: true, message: 'Перевод ' + amount + ' CR → ' + to.accountNo + ' выполнен.', amount, to: to.accountNo, newBalance: from.balance };
 }
+
 
 /** Player receives credits from NPC via phone request */
 export function requestNpcTransfer(state, npcId, amount) {

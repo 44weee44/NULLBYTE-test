@@ -124,27 +124,11 @@ export const BALANCE = {
 };
 
 export const PLUGINS = [
-  
-  { id:'net-link', name:'Net Link', category:'Mobile Operations', version:'1.0.0', price:0, requiredLevel:1, minOs:1, ram:1, storage:40, cooldown:0, description:'Подключение терминала к региональной сети (15с).', effect:'Текущая сеть региона.', starter:true },
-  { id:'net-analyzer', name:'Net Analyzer', category:'Mobile Operations', version:'1.0.0', price:0, requiredLevel:1, minOs:1, ram:1, storage:80, cooldown:0, description:'Анализ региональной сети (~20с) и полный отчёт PHONE_ID.', effect:'Отчёт 550 устройств/регион.', starter:true },
-  { id:'phone-access', name:'Phone Access', category:'Mobile Operations', version:'1.0.0', price:0, requiredLevel:1, minOs:1, ram:1, storage:100, cooldown:0, description:'Доступ к телефону по PHONE_ID.', effect:'Сессия исследования телефона.', starter:true },
-  { id:'mail-drop', name:'Mail Drop', category:'Mobile Operations', version:'1.0.0', price:0, requiredLevel:1, minOs:1, ram:1, storage:60, cooldown:0, description:'Вложение для NPC через N-Mail (альтернативный путь).', effect:'Шанс раскрытия PHONE_ID.', starter:true },
-  { id:'sms-bomber', name:'SMS Bomber', category:'Mobile Operations', version:'1.0.0', price:40000, requiredLevel:1, minOs:1, ram:1, storage:40, cooldown:5000, description:'Игровая нагрузка SMS на виртуальный номер.', effect:'Симуляция спама.', starter:false },
-  { id:'bank-peek', name:'Bank Peek', category:'Mobile Operations', version:'1.0.0', price:100000, requiredLevel:1, minOs:1, ram:1, storage:80, cooldown:0, description:'Доступ к виртуальным банковским пометкам телефона.', effect:'Игровые bank notes.', starter:false },
-
-  { id:'site-analyzer', name:'Site Analyzer', category:'Анализ сайтов', version:'1.0.0', price:0, requiredLevel:1, minOs:1, ram:1, storage:120, cooldown:0, description:'WEB RECON: DNS, fingerprint, surface, артефакты разведки.', effect:'Карта домена и SIGNATURE для pipeline.', starter:true },
-  { id:'artifact-decoder', name:'Artifact Decoder', category:'Расшифровка', version:'1.0.0', price:0, requiredLevel:1, minOs:1, ram:1, storage:180, cooldown:0, description:'Преобразует условный игровой артефакт в подсказку.', effect:'Открывает шаг декодирования.', starter:true },
-  { id:'node-radar', name:'Node Radar', category:'Обнаружение узлов', version:'1.1.0', price:0, requiredLevel:1, minOs:1, ram:1, storage:260, cooldown:5000, description:'Находит симулируемый узел цели в личном мире.', effect:'Показывает игровой host-node.', starter:true },
-  { id:'weakness-lab', name:'Weakness Lab', category:'Поиск игровых слабостей', version:'1.2.0', price:0, requiredLevel:1, minOs:1, ram:2, storage:420, cooldown:7000, description:'Проверяет абстрактную модель защиты цели.', effect:'Открывает условную слабость.', starter:true },
-  { id:'sim-exploit', name:'Sim Exploit', category:'Симуляция доступа', version:'2.0.0', price:0, requiredLevel:1, minOs:1, ram:2, storage:650, cooldown:12000, description:'Выполняет безопасную игровую проверку шанса доступа.', effect:'Завершает этап проникновения в симуляции.', starter:true },
-  { id:'data-exporter', name:'Data Exporter', category:'Экспорт', version:'1.0.0', price:0, requiredLevel:1, minOs:1, ram:1, storage:220, cooldown:0, description:'Создаёт файл с результатом внутриигровой операции.', effect:'Позволяет экспортировать результат контракта.', starter:true },
-  { id:'site-editor', name:'Site Editor', category:'Изменение сайта', version:'1.0.0', price:620, requiredLevel:1, ram:2, storage:380, cooldown:9000, description:'Меняет текст или виртуальную запись тестовой цели.', effect:'Открывает игровое изменение содержимого.',minOs:2 },
-  { id:'db-reader', name:'Virtual DB Reader', category:'Виртуальные данные', version:'1.0.0', price:1900, requiredLevel:6, ram:3, storage:900, cooldown:15000, description:'Читает только записи собственной вымышленной базы.', effect:'Открывает высокоуровневые игровые записи.',minOs:3 },
-  { id:'identity-mask', name:'Identity Veil', category:'Игровая маскировка', version:'1.0.0', price:3800, requiredLevel:7, ram:2, storage:700, cooldown:0, description:'Снижает условную заметность персонажа в модели мира.', effect:'Уменьшает симулируемый банковский риск.',minOs:3 },
-  { id:'bank-decryptor', name:'Vault Decoder', category:'Банк / эндгейм', version:'1.0.0', price:5200, requiredLevel:8, ram:3, storage:1200, cooldown:0, description:'Редкий декриптор для финальной банковской миссии.', effect:'Необходим для рискованной игровой цели.',minOs:4 },
-  { id:'obfuscator', name:'Trace Obfuscator', category:'Банк / эндгейм', version:'1.0.0', price:4600, requiredLevel:8, ram:2, storage:1000, cooldown:0, description:'Снижает риск виртуальной трассировки.', effect:'Необходим для рискованной игровой цели.',minOs:4 },
-  { id:'file-forge', name:'File Forge', category:'Создание файлов', version:'1.0.0', price:520, requiredLevel:1, ram:1, storage:300, cooldown:0, description:'Подготавливает виртуальные файлы и NBS-документы.', effect:'Разблокирует продвинутую работу с файлами.',minOs:2 },
-  { id:'map-scanner', name:'Atlas Scanner', category:'Карта / цели', version:'1.0.0', price:350, requiredLevel:1, ram:1, storage:250, cooldown:0, description:'Уточняет POI и игровые маршруты на NullAtlas.', effect:'Показывает расширенные подсказки карты.',minOs:1 }
+  { id:'net-link', name:'Net Link', category:'Mobile Operations', version:'1.0.0', price:0, requiredLevel:1, minOs:1, ram:1, storage:40, cooldown:0, description:'Подключение терминала к региональной сети.', effect:'Текущая сеть региона.', starter:true, terminal:'phone' },
+  { id:'net-analyzer', name:'Net Analyzer', category:'Mobile Operations', version:'1.0.0', price:0, requiredLevel:1, minOs:1, ram:1, storage:80, cooldown:0, description:'Анализ региональной сети и отчёт PHONE_ID.', effect:'Отчёт устройств региона.', starter:true, terminal:'phone' },
+  { id:'phone-access', name:'Phone Access', category:'Mobile Operations', version:'1.0.0', price:0, requiredLevel:1, minOs:1, ram:1, storage:100, cooldown:0, description:'Доступ к телефону по PHONE_ID.', effect:'Сессия Phone Lab.', starter:true, terminal:'phone' },
+  { id:'mail-drop', name:'Mail Drop', category:'Mobile Operations', version:'1.0.0', price:0, requiredLevel:1, minOs:1, ram:1, storage:60, cooldown:0, description:'Вложение для NPC через N-Mail.', effect:'Шанс раскрытия PHONE_ID.', starter:true, terminal:'phone' },
+  { id:'sms-bomber', name:'SMS Bomber', category:'Mobile Operations', version:'1.0.0', price:40000, requiredLevel:1, minOs:1, ram:1, storage:40, cooldown:5000, description:'Игровая нагрузка SMS на виртуальный номер.', effect:'Симуляция спама.', starter:false, terminal:'phone' },
 ];
 
 export const HARDWARE = {
@@ -212,10 +196,14 @@ export const PLUGINS_LOCKED = new Set([
 
 
 export function isPluginLocked(id) {
-  return PLUGINS_LOCKED.has(id);
+  if (PLUGINS_LOCKED.has(id)) return true;
+  const p = PLUGINS.find(x => x.id === id);
+  if (!p) return true; // removed plugins
+  if (p.terminal === 'server') return true;
+  return false;
 }
 
-const STARTER_CONTRACT_TOOLS=['site-analyzer','artifact-decoder','node-radar','weakness-lab','sim-exploit','data-exporter'];
+const STARTER_CONTRACT_TOOLS=['net-link','net-analyzer','phone-access'];
 const DB_CONTRACT_TOOLS=[...STARTER_CONTRACT_TOOLS,'db-reader'];
 const MISSION_TEMPLATES = [
   {id:'job-001',title:'Потерянная накладная',client:'Mira Voss',target:'volt-market',category:'info',difficulty:'Лёгкая',minLevel:1,reward:180,xp:110,objective:'Найти игровую запись заказа VM-204 и передать файл клиенту.',hint:'В каталоге Volt Market хранится артефакт CATALOG-B7.',requiredPlugins:STARTER_CONTRACT_TOOLS},
