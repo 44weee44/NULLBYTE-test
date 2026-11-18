@@ -235,14 +235,17 @@ export function idempotencyKey(prefix='evt') { return `${prefix}-${Date.now().to
 /** Darkshop market state */
 export function getCredits(state) {
   const n = Number(state?.economy?.credits);
-  if (Number.isFinite(n)) return n;
-  return Number(state?.player?.credits) || 0;
+  if (Number.isFinite(n) && n >= 0) return Math.min(n, 1e12);
+  const p = Number(state?.player?.credits);
+  if (Number.isFinite(p) && p >= 0) return Math.min(p, 1e12);
+  return 0;
 }
 export function setCredits(state, value) {
-  const v = Math.max(0, Math.round(Number(value) || 0));
+  let v = Math.round(Number(value) || 0);
+  if (!Number.isFinite(v) || v < 0) v = 0;
+  if (v > 1e12) v = 1e12;
   if (!state.economy) state.economy = { credits: v, transactions: [] };
   state.economy.credits = v;
-  // keep mirror for legacy UI that reads player.credits
   if (state.player) state.player.credits = v;
   return v;
 }
@@ -532,9 +535,53 @@ export function createInitialState(tgUser=null) {
 function finite(value) { const n=Number(value); return Number.isFinite(n)?n:0; }
 function clamp(value,min,max) { return Math.max(min,Math.min(max,finite(value))); }
 
+export function clampPlayerEconomy(state) {
+  if (!state) return state;
+  if (!state.economy) state.economy = { credits: 0, transactions: [] };
+  let c = Number(state.economy.credits);
+  if (!Number.isFinite(c) || c < 0) c = 0;
+  if (c > 1e12) c = 1e12;
+  state.economy.credits = Math.round(c);
+  if (state.player) {
+    state.player.credits = state.economy.credits;
+    if (state.player.nickname) {
+      state.player.nickname = String(state.player.nickname).replace(/[\u0000-\u001F\u007F<>]/g,'').slice(0, 24);
+    }
+    if (state.player.walletId) {
+      state.player.walletId = String(state.player.walletId).replace(/[^a-zA-Z0-9\-_]/g,'').slice(0, 32);
+    }
+    let xp = Number(state.player.xp); if (!Number.isFinite(xp) || xp < 0) xp = 0;
+    state.player.xp = Math.min(Math.round(xp), 1e9);
+    let lvl = Number(state.player.level); if (!Number.isFinite(lvl) || lvl < 1) lvl = 1;
+    state.player.level = Math.min(Math.round(lvl), 9999);
+  }
+  return state;
+}
+
+export function sanitizeSaveObject(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  // Block prototype pollution
+  if (Object.prototype.hasOwnProperty.call(raw, '__proto__') ||
+      Object.prototype.hasOwnProperty.call(raw, 'constructor') ||
+      Object.prototype.hasOwnProperty.call(raw, 'prototype')) {
+    try { delete raw.__proto__; } catch {}
+  }
+  const clean = JSON.parse(JSON.stringify(raw, (key, value) => {
+    if (key === '__proto__' || key === 'constructor' || key === 'prototype') return undefined;
+    if (typeof value === 'function') return undefined;
+    if (typeof value === 'number' && !Number.isFinite(value)) return 0;
+    return value;
+  }));
+  return clean;
+}
+
 export function migrateSave(raw,tgUser=null) {
+  if (raw && typeof raw === 'object') {
+    try { raw = sanitizeSaveObject(raw) || raw; } catch { raw = null; }
+  }
+
   const fresh=createInitialState(tgUser);
-  if (!raw || typeof raw!=='object') return {state:fresh,changed:true};
+  if (!raw || typeof raw!=='object') { clampPlayerEconomy(fresh); return {state:fresh,changed:true}; }
   // Preserve known fields from the previous prototype instead of silently resetting progress.
   if (!raw.version && (raw.playerName || raw.money!==undefined || raw.telegramId)) {
     fresh.player.nickname = validNickname(raw.playerName)?raw.playerName:'';
@@ -543,7 +590,7 @@ export function migrateSave(raw,tgUser=null) {
     fresh.player.totalEarned = Math.max(0, Number(raw.hackEarnings) || 0);
     if (Number.isFinite(Number(raw.money))) fresh.economy.credits=Math.max(0,Number(raw.money));
     fresh.meta.migratedFrom='legacy-nullbyte-player';
-    return {state:fresh,changed:true};
+    clampPlayerEconomy(fresh); return {state:fresh,changed:true};
   }
   const out={...fresh,...raw,version:SAVE_VERSION};
   out.meta={...fresh.meta,...(raw.meta||{})};
@@ -627,6 +674,7 @@ export function migrateSave(raw,tgUser=null) {
   for(const key of ['xp','reputation','contractsCompleted','totalEarned'])out.player[key]=clamp(out.player[key],0,1e9);
   out.economy.credits=clamp(out.economy.credits,0,1e9);
   out.meta.updatedAt=Date.now();
+  clampPlayerEconomy(out);
   return {state:out,changed:raw.version!==SAVE_VERSION};
 }
 

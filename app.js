@@ -12,6 +12,14 @@ import { extendedPluginDocs } from './operations.js';
 import { loadSavedGame, saveGame } from './storage.js';
 
 const $ = id => { try { return document.getElementById(id); } catch { return null; } };
+const _rateLimit = Object.create(null);
+function rateOk(key, ms = 400) {
+  const now = Date.now();
+  if (_rateLimit[key] && now - _rateLimit[key] < ms) return false;
+  _rateLimit[key] = now;
+  return true;
+}
+
 const svg = {
   profile:'<circle cx="12" cy="8" r="4"/><path d="M4 21c.7-4.1 3.3-6.2 8-6.2s7.3 2.1 8 6.2"/>',
   terminal:'<rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3m6 0h4"/>',
@@ -289,6 +297,15 @@ async function finishBoot() {
   try { updateClock(); } catch{}
   try { processTimedEvents(state.game); } catch{}
   try {
+    if (state.game?.player?.nickname) {
+      state.game.player.nickname = String(state.game.player.nickname).replace(/[\u0000-\u001F\u007F]/g,'').slice(0,24);
+    }
+    if (state.game?.economy) {
+      const c = Number(state.game.economy.credits);
+      state.game.economy.credits = Number.isFinite(c) && c > 0 ? Math.min(c, 1e12) : 0;
+    }
+  } catch(e){}
+  try {
     // sync legacy player.credits ↔ economy.credits
     if (state.game.economy && state.game.player) {
       if (state.game.economy.credits == null && state.game.player.credits != null)
@@ -465,8 +482,10 @@ function createTerminalSession(mode){
 
 function getTerm(id){
   if(!isTerminalId(id))return null;
-  if(!state.terminals.has(id))state.terminals.set(id,createTerminalSession());
-  return state.terminals.get(id);
+  if(!state.terminals.has(id))state.terminals.set(id,createTerminalSession('vanilla'));
+  const t = state.terminals.get(id);
+  if (t && !t.mode) t.mode = 'vanilla';
+  return t;
 }
 
 function isBrowserId(id){return id==='browser'||String(id).startsWith('browser-');}
@@ -613,8 +632,9 @@ function openApp(id) {
   width = place.width; height = place.height;
   const win={id,title,path,ram:app.ram,minimized:false,maximized:false,alwaysOnTop:false,left:place.left,top:place.top,oldRect:null,baseApp:baseId};
   state.opened.set(id,win);
+  // element attached below
   const element=document.createElement('section');
-  element.className=`app-window${isTerm?' app-window-terminal':''}${isBrowserId(id)?' app-window-browser':''}`;
+  element.className=`app-window is-opening${isTerm?' app-window-terminal':''}${isBrowserId(id)?' app-window-browser':''}`;
   element.dataset.window=id;
   element.setAttribute('role','dialog');
   element.classList.add('is-resizable','window-enter');
@@ -625,7 +645,10 @@ function openApp(id) {
   element.style.top=`${place.top}px`;
 
   element.innerHTML=`<header class="window-bar"><span class="window-app-mark">${icon(terminalIconId(id))}</span><strong class="window-title">${esc(title)}</strong><span class="window-path">${esc(path)}</span><div class="window-controls"><button type="button" data-action="toggle-pin-window" class="pin-btn" title="Поверх остальных (Always on Top)" aria-label="Поверх остальных"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 2l1.5 1.5-1 1L16 6l2.5-.5L20 7l-6 6-1.5-1.5L14 10l-1.5 1.5L4 20l-.5-3.5L12 9.5 10.5 8 14 2z"/></svg></button><button type="button" data-action="minimize-window" title="Свернуть" aria-label="Свернуть">—</button><button type="button" data-action="maximize-window" title="Развернуть" aria-label="Развернуть">□</button><button type="button" data-action="close-window" title="Закрыть" aria-label="Закрыть">×</button></div></header><div class="window-content" data-content></div><div class="window-resize" data-resize></div>`;
-  $('windowLayer').append(element);wireWindow(id,element);renderWindow(id);focusWindow(id);renderTaskbar();
+  $('windowLayer').append(element);wireWindow(id,element);
+  requestAnimationFrame(() => {
+    setTimeout(() => { try { element.classList.remove('is-opening'); } catch(e){} }, 220);
+  });renderWindow(id);focusWindow(id);renderTaskbar();
   setTimeout(()=>element.classList.remove('window-enter'),280);
   if(isTerm)requestAnimationFrame(()=>element.querySelector('.terminal-form input')?.focus({preventScroll:true}));
 }
@@ -724,6 +747,7 @@ function focusWindow(id) {
   const win=state.opened.get(id);if(!win)return;win.minimized=false;state.active=id;state.z++;
   // Normal windows: z 20–999; always-on-top: 10000+
   const base = win.alwaysOnTop ? 10000 : 20;
+  document.querySelectorAll('.app-window').forEach(w => w.classList.toggle('is-focused', w.getAttribute('data-window') === String(id)));
   const el=document.querySelector(`[data-window="${id}"]`);
   if(el){
     el.classList.remove('is-minimized');
@@ -758,7 +782,32 @@ function togglePinWindow(id) {
   toast(win.alwaysOnTop ? 'Окно поверх остальных' : 'Обычный порядок окон', 'success');
 }
 function minimizeWindow(id) {const win=state.opened.get(id);if(!win)return;win.minimized=true;document.querySelector(`[data-window="${id}"]`)?.classList.add('is-minimized');document.querySelector(`[data-window="${id}"]`)?.classList.remove('is-active');if(state.active===id)state.active=null;const next=[...state.opened.keys()].reverse().find(k=>!state.opened.get(k).minimized);if(next)focusWindow(next);else renderTaskbar();}
-function closeWindow(id) {state.opened.delete(id);if(isTerminalId(id))state.terminals.delete(id);document.querySelector(`[data-window="${id}"]`)?.remove();if(state.active===id)state.active=null;const next=[...state.opened.keys()].reverse().find(k=>!state.opened.get(k).minimized);if(next)focusWindow(next);else renderTaskbar();}
+function closeWindow(id) {
+  const win = state.opened.get(id);
+  const el = (win && win.el) || document.querySelector('.app-window[data-window="' + String(id).replace(/"/g,'') + '"]');
+  const finish = () => {
+    try {
+      state.opened.delete(id);
+      if (isTerminalId(id)) state.terminals.delete(id);
+      if (isBrowserId(id) && state.browserSessions) state.browserSessions.delete(id);
+      if (el) el.remove();
+      if (state.active === id) {
+        state.active = null;
+        const rest = [...state.opened.keys()];
+        if (rest.length) focusWindow(rest[rest.length - 1]);
+      }
+      renderTaskbar();
+      scheduleSave();
+    } catch (e) { console.warn(e); }
+  };
+  if (el && !el.classList.contains('is-closing')) {
+    el.classList.add('is-closing');
+    setTimeout(finish, 160);
+    return;
+  }
+  finish();
+}
+
 function maximizeWindow(id) {
   const win=state.opened.get(id),el=document.querySelector(`[data-window="${id}"]`);if(!win||!el)return;
   if(!win.maximized){win.oldRect={left:el.style.left,top:el.style.top,width:el.style.width,height:el.style.height};win.maximized=true;el.classList.add('is-maximized');}
@@ -835,6 +884,7 @@ function wireAppContent(id,el) {
           return;
         }
         if(kind==='bank-transfer'){
+          if (!rateOk('bank-tx', 800)) { toast('Подожди…','warn'); return; }
           const to=(f.elements.to?.value||'').trim();
           const amount=Number(f.elements.amount?.value||0);
           const sid=state.bankSessionId||state.game.bank?.sessionId;
@@ -2974,6 +3024,7 @@ function handleAction(action,el,ev) {
       renderWindow('phone'); break;
     }
     case 'phone-file-download': {
+      if (!rateOk('dl-file', 350)) break;
       const phoneId = el.dataset.phone || el.getAttribute('data-phone');
       const fileId = el.dataset.file || el.getAttribute('data-file');
       const phone = findPhone(phoneId);
@@ -3324,6 +3375,7 @@ function handleAction(action,el,ev) {
       break;
     }
     case 'darkshop-buy':{
+      if (!rateOk('ds-buy', 600)) { toast('Подожди…','warn'); break; }
       const lid = id || el.dataset.id || el.getAttribute('data-id');
       try {
         const r = buyDarkshopListing(state.game, lid);

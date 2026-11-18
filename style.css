@@ -1320,3 +1320,130 @@ html,body{background:#0a0a0a!important;font-size:12px!important}
 .site-brand span{color:var(--accent,#5ec8ff)}
 .file-card .nb-card-top{display:flex;justify-content:space-between;gap:8px;align-items:center}
 .app-icon-img{display:block;border-radius:2px}
+
+/* ===== motion system (snappy, not slow) ===== */
+:root {
+  --ease-out: cubic-bezier(.2,.8,.2,1);
+  --ease-soft: cubic-bezier(.4,0,.2,1);
+  --dur-fast: 120ms;
+  --dur-med: 180ms;
+  --dur-slow: 260ms;
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+.app-window {
+  transition:
+    box-shadow var(--dur-med) var(--ease-soft),
+    opacity var(--dur-fast) var(--ease-soft),
+    transform var(--dur-med) var(--ease-out);
+  will-change: transform, opacity;
+}
+.app-window.is-opening {
+  animation: nbWinIn var(--dur-med) var(--ease-out) both;
+}
+.app-window.is-closing {
+  animation: nbWinOut var(--dur-fast) var(--ease-soft) both;
+  pointer-events: none;
+}
+.app-window.is-dragging {
+  transition: none !important;
+  opacity: .97;
+}
+.app-window.is-focused {
+  box-shadow: 0 12px 40px #000a, 0 0 0 1px #3a5a7088;
+}
+@keyframes nbWinIn {
+  from { opacity: 0; transform: translateY(8px) scale(.985); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes nbWinOut {
+  from { opacity: 1; transform: none; }
+  to   { opacity: 0; transform: translateY(6px) scale(.98); }
+}
+
+.btn, button.btn, .nb-action, .nb-tab, .desktop-icon, .taskbar-app, .map-point, [data-action] {
+  transition: transform var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-soft), border-color var(--dur-fast) var(--ease-soft), box-shadow var(--dur-fast) var(--ease-soft), opacity var(--dur-fast);
+  touch-action: manipulation;
+}
+.btn:active, button.btn:active, .nb-action:active, .nb-tab:active, .taskbar-app:active, .map-point:active, [data-action]:active {
+  transform: scale(.97);
+}
+.btn.primary {
+  transition: transform var(--dur-fast) var(--ease-out), filter var(--dur-fast), box-shadow var(--dur-med);
+}
+.btn.primary:hover { filter: brightness(1.08); }
+
+.modal-backdrop {
+  transition: opacity var(--dur-med) var(--ease-soft);
+}
+.modal-backdrop:not([hidden]) {
+  animation: nbFadeIn var(--dur-med) var(--ease-soft) both;
+}
+.modal-card, .modal {
+  animation: nbModalIn var(--dur-med) var(--ease-out) both;
+}
+@keyframes nbFadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes nbModalIn {
+  from { opacity: 0; transform: translateY(12px) scale(.96); }
+  to   { opacity: 1; transform: none; }
+}
+
+.toast {
+  animation: nbToastIn var(--dur-med) var(--ease-out) both;
+  transition: opacity var(--dur-fast), transform var(--dur-fast);
+}
+@keyframes nbToastIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: none; }
+}
+
+.nb-tab, .list-row, .nb-card, .contract-card, .forum-row {
+  transition: background var(--dur-fast) var(--ease-soft), border-color var(--dur-fast), transform var(--dur-fast);
+}
+.nb-card:active, .list-row:active { transform: scale(.995); }
+
+.nb-tab.on {
+  transition: background var(--dur-fast), color var(--dur-fast), border-color var(--dur-fast);
+}
+
+/* terminal lines soft appear */
+.term-line {
+  animation: nbLineIn 90ms var(--ease-out) both;
+}
+@keyframes nbLineIn {
+  from { opacity: .35; }
+  to { opacity: 1; }
+}
+
+.map-point .map-label {
+  transition: transform var(--dur-fast) var(--ease-out), border-color var(--dur-fast), box-shadow var(--dur-med), background var(--dur-fast);
+}
+.map-point:hover .map-label, .map-point.on .map-label {
+  transform: translateY(-1px);
+}
+
+.start-menu {
+  transform-origin: top left;
+  animation: nbMenuIn var(--dur-med) var(--ease-out) both;
+}
+@keyframes nbMenuIn {
+  from { opacity: 0; transform: translateY(-6px) scale(.98); }
+  to   { opacity: 1; transform: none; }
+}
+
+.window-content {
+  transition: opacity var(--dur-fast) var(--ease-soft);
+}
+.taskbar-app {
+  transition: background var(--dur-fast), transform var(--dur-fast);
+}
+
+/* smooth scroll */
+.window-content, .term-output, .nb-list, .list {
+  scroll-behavior: smooth;
+}
