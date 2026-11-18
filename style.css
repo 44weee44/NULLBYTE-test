@@ -1447,3 +1447,91 @@ html,body{background:#0a0a0a!important;font-size:12px!important}
 .window-content, .term-output, .nb-list, .list {
   scroll-behavior: smooth;
 }
+
+
+/* ===== soft polish (subtle) ===== */
+.taskbar {
+  transition: background var(--dur-med) var(--ease-soft), box-shadow var(--dur-med);
+}
+.taskbar-app.is-active,
+.taskbar-btn.active {
+  box-shadow: inset 0 -2px 0 #5ec8ff88;
+  transition: box-shadow var(--dur-med) var(--ease-out), background var(--dur-fast);
+}
+.badge {
+  transition: transform var(--dur-fast) var(--ease-out), background var(--dur-fast);
+}
+.panel, .notice, .bank-tile, .list-row, .nb-card, .contract-card {
+  transition:
+    opacity var(--dur-med) var(--ease-soft),
+    transform var(--dur-med) var(--ease-out),
+    border-color var(--dur-fast),
+    background var(--dur-fast);
+}
+.app-heading {
+  animation: nbFadeUp 200ms var(--ease-out) both;
+}
+@keyframes nbFadeUp {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* content swap soft */
+[data-content] > * {
+  animation: nbContentIn 160ms var(--ease-out) both;
+}
+@keyframes nbContentIn {
+  from { opacity: .0; transform: translateY(4px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* terminal caret */
+.term-prompt-input, .terminal-input, .term-inline-input {
+  caret-color: #7dffa3;
+  transition: border-color var(--dur-fast), box-shadow var(--dur-fast);
+}
+.term-prompt-input:focus, .terminal-input:focus, .term-inline-input:focus {
+  box-shadow: 0 0 0 1px #5ec8ff55;
+}
+
+/* soft progress bars if any */
+.progress-bar > span, .bar-fill {
+  transition: width 220ms var(--ease-out);
+}
+
+/* minimize */
+.app-window.is-minimized {
+  opacity: 0;
+  transform: scale(.96) translateY(12px);
+  pointer-events: none;
+  transition: opacity var(--dur-med) var(--ease-soft), transform var(--dur-med) var(--ease-out);
+}
+
+/* primary glow soft */
+.btn.primary {
+  box-shadow: 0 0 0 0 transparent;
+}
+.btn.primary:hover, .btn.primary:focus-visible {
+  box-shadow: 0 0 16px #5ec8ff33;
+}
+
+/* map linked pulse very soft */
+.map-point.linked .map-label {
+  animation: nbSoftPulse 2.4s var(--ease-soft) infinite;
+}
+@keyframes nbSoftPulse {
+  0%, 100% { box-shadow: 0 0 0 0 #5dcea000; }
+  50% { box-shadow: 0 0 12px 0 #5dcea044; }
+}
+
+/* boot / desktop */
+#desktopWorkspace, .desktop-workspace {
+  animation: nbFadeIn 280ms var(--ease-soft) both;
+}
+
+/* toast stack smoother exit */
+.toast.is-out {
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 140ms var(--ease-soft), transform 140ms var(--ease-soft);
+}
