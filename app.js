@@ -13,6 +13,19 @@ import { loadSavedGame, saveGame } from './storage.js';
 
 const $ = id => { try { return document.getElementById(id); } catch { return null; } };
 const _rateLimit = Object.create(null);
+function hashStr(s) {
+  let h = 2166136261;
+  const str = String(s || '');
+  for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return h >>> 0;
+}
+function applyWallpaper(css) {
+  const desk = $('desktopWorkspace') || document.querySelector('.desktop-workspace') || document.getElementById('desktop');
+  if (desk) desk.style.background = css || '';
+  const root = document.getElementById('osRoot') || document.body;
+  if (root && css) root.style.setProperty('--desktop-bg', css);
+}
+
 function rateOk(key, ms = 400) {
   const now = Date.now();
   if (_rateLimit[key] && now - _rateLimit[key] < ms) return false;
@@ -22,7 +35,8 @@ function rateOk(key, ms = 400) {
 
 const svg = {
   profile:'<circle cx="12" cy="8" r="4"/><path d="M4 21c.7-4.1 3.3-6.2 8-6.2s7.3 2.1 8 6.2"/>',
-  terminal:'<rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3m6 0h4"/>',
+  'phone-term':'<rect x="5" y="2" width="14" height="20" rx="2"/><path d="M9 5h6M8 9h8v7H8zM10 19h4"/>',
+  terminal:'<rect x="3" y="4" width="18" height="14" rx="2"/><path d="M7 9l2.5 2.5L7 14M12 14h5"/>',
   darkshop:'<path d="M4 8h16l-1.5 13h-13L4 8Z"/><path d="M8 8V6a4 4 0 0 1 8 0v2"/>',
   browser:'<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>',
   forge:'<path d="M12 2.5L3.5 7v10L12 21.5 20.5 17V7L12 2.5z"/><path d="M12 12v9.5M3.5 7L12 12l8.5-5"/><path d="M8.5 9.5l3.5-2 3.5 2"/>',
@@ -297,6 +311,9 @@ async function finishBoot() {
   try { updateClock(); } catch{}
   try { processTimedEvents(state.game); } catch{}
   try {
+    if (state.game?.computer?.wallpaperCss) applyWallpaper(state.game.computer.wallpaperCss);
+  } catch(e){}
+  try {
     if (state.game?.player?.nickname) {
       state.game.player.nickname = String(state.game.player.nickname).replace(/[\u0000-\u001F\u007F]/g,'').slice(0,24);
     }
@@ -465,18 +482,43 @@ function printNeofetch(termId) {
 }
 
 
-function createTerminalSession(mode){
-  if (!mode) mode = 'vanilla';
+async function startTerminalBoot(termId) {
+  const term = getTerm(termId);
+  if (!term || !term.booting) return;
+  const mode = term.mode || 'vanilla';
+  const steps = [
+    { t: '▸ mount /dev/nullbyte', ms: 280 },
+    { t: '▸ link tty session', ms: 320 },
+    { t: mode === 'phone' ? '▸ load phone-ops toolkit' : mode === 'server' ? '▸ load server toolkit' : '▸ load shell profile', ms: 400 },
+    { t: '▸ check auth token… ok', ms: 350 },
+    { t: '▸ sync clock ' + new Date().toISOString().slice(11,19) + 'Z', ms: 300 },
+    { t: '▸ ready.', ms: 250 }
+  ];
+  for (const s of steps) {
+    if (!getTerm(termId)) return;
+    termAdd(termId, s.t, 'muted');
+    await new Promise(r => setTimeout(r, s.ms + (Math.random()*120|0)));
+  }
+  term.busy = false;
+  term.booting = false;
   const html = typeof buildNeofetchHtml === 'function' ? buildNeofetchHtml(state.game) : '';
+  if (html) termAdd(termId, '__NEOFETCH__', 'html');
   const hint = mode === 'phone'
-    ? 'Phone Term · plugins · run net link · run phone access'
+    ? 'Phone Term · help · plugins · run net link'
     : mode === 'server'
       ? 'Server Term · серверные плагины скоро'
-      : 'Terminal · плагины отключены';
-  const lines = html
-    ? [{ text: '__NEOFETCH__', type: 'html', html }, { text: hint, type: 'muted' }]
-    : [{ text: 'NULLBYTE OS · ' + mode, type: 'green' }, { text: hint, type: 'muted' }];
-  return { mode: mode, lines: lines, plugin: null, busy: false, scrollPin: true };
+      : 'Terminal · wallpaper · status · help';
+  termAdd(termId, hint, 'muted');
+  renderWindow(termId);
+}
+
+function createTerminalSession(mode){
+  if (!mode) mode = 'vanilla';
+  const bootLines = [
+    { text: 'NULLBYTE tty — init', type: 'muted' },
+    { text: 'loading modules…', type: 'muted' }
+  ];
+  return { mode: mode, lines: bootLines, plugin: null, busy: true, scrollPin: true, booting: true, bootStarted: Date.now() };
 }
 
 
@@ -591,6 +633,7 @@ function openApp(id) {
     const newId=`term-${state.termSeq}`;
     state.terminals.set(newId, createTerminalSession(mode));
     id = newId;
+    setTimeout(() => startTerminalBoot(newId), 40);
   }
   if(id==='browser'){
     state.browserSeq=(state.browserSeq||0)+1;
@@ -1624,8 +1667,8 @@ function renderBlackWire(g) {
     return `<article class="contract-card ${state.selectedMissionId===m.id?'is-selected':''}">
       <div class="contract-top"><strong>${esc(m.title)}</strong><span class="badge ${m.status==='accepted'?'amber':m.status==='submitted'?'green':'gray'}">${m.status==='accepted'?'ACTIVE':m.status==='submitted'?'VERIFYING':(m.category||'JOB').toUpperCase()}</span></div>
       <p>${esc(m.objective)}</p>
-      <div class="contract-meta"><span>ID ${esc(m.id)}</span><span>${esc(m.ownerName||m.client||'—')}</span><span>${esc(m.regionId||'')}</span></div>
-      <div class="contract-meta"><span>Защита ${missionProtBadge(m)}</span><span>${esc(m.phoneId||'—')}</span></div>
+      <div class="contract-meta mission-meta"><span>ID ${esc(m.id)}</span><span>${esc(m.ownerName||m.client||'—')}</span><span>${esc(m.regionId||'')}</span></div>
+      <div class="contract-meta mission-meta"><span>Защита ${missionProtBadge(m)}</span><span>${esc(m.phoneId||'—')}</span></div>
       <div class="contract-meta section-gap"><span class="text-green">+${fmt(m.reward)} CR</span><span class="muted small">${m.baseReward!=null?`база ${fmt(m.baseReward)} + бонус ${fmt(m.rewardBonus||0)}`:''}</span><span>+${fmt(m.xp)} XP</span></div>
       <div class="divider"></div>
       <div class="small muted">${esc(m.hint||'')}</div>
@@ -1722,6 +1765,7 @@ async function runTerminalCommand(termId, raw) {
     }
 
     // After scan etc.: next line is filename, not a command
+    if (term.booting || term.busy && term.booting) { termAdd(termId, '…boot in progress', 'warn'); return; }
     if (term.awaitFilename) {
       const pending = term.awaitFilename;
       term.awaitFilename = null;
@@ -1799,6 +1843,75 @@ async function runTerminalCommand(termId, raw) {
     termAdd(termId, 'Plugins: net-link · net-analyzer · phone-access · …', 'muted');
     return;
   }
+  
+  if (c0 === 'wallpaper' || c0 === 'wallpapers') {
+    if ((getTerm(termId)?.mode || 'vanilla') !== 'vanilla') {
+      termAdd(termId, 'wallpaper — только в обычном Terminal', 'warn'); return;
+    }
+    const walls = [
+      { id: 'void', name: 'Void Grid', css: 'radial-gradient(ellipse at 30% 20%,#1a2838 0%,#0a1018 55%,#05080c 100%)' },
+      { id: 'ember', name: 'Ember Night', css: 'radial-gradient(ellipse at 70% 10%,#3a1810 0%,#12080a 50%,#070405 100%)' },
+      { id: 'toxic', name: 'Toxic Mesh', css: 'radial-gradient(ellipse at 50% 0%,#0d2a22 0%,#071410 45%,#030a08 100%)' },
+      { id: 'violet', name: 'Violet Core', css: 'radial-gradient(ellipse at 20% 80%,#221038 0%,#0c0818 50%,#05040c 100%)' },
+      { id: 'steel', name: 'Steel Horizon', css: 'linear-gradient(165deg,#1c2430 0%,#0e141c 40%,#080c12 100%)' },
+      { id: 'signal', name: 'Signal Blue', css: 'radial-gradient(circle at 80% 20%,#123048 0%,#0a1520 40%,#060a10 100%)' }
+    ];
+    if (!argRest) {
+      termAdd(termId, '┌─ WALLPAPERS ─────────────', 'green');
+      walls.forEach((w,i) => termAdd(termId, `  ${i+1}. ${w.id.padEnd(8)} ${w.name}`, ''));
+      termAdd(termId, 'usage: wallpaper <id|number>', 'muted');
+      return;
+    }
+    const key = argRest.trim().toLowerCase();
+    const w = walls.find((x,i) => x.id === key || String(i+1) === key);
+    if (!w) { termAdd(termId, 'не найдено. wallpaper — список', 'error'); return; }
+    termAdd(termId, 'applying ' + w.name + '…', 'muted');
+    await new Promise(r => setTimeout(r, 400));
+    if (!state.game.computer) state.game.computer = {};
+    state.game.computer.wallpaper = w.id;
+    state.game.computer.wallpaperCss = w.css;
+    applyWallpaper(w.css);
+    scheduleSave();
+    termAdd(termId, '✔ wallpaper → ' + w.name, 'green');
+    return;
+  }
+  if (c0 === 'status' || c0 === 'sys' || c0 === 'sysinfo') {
+    if ((getTerm(termId)?.mode || 'vanilla') !== 'vanilla') {
+      termAdd(termId, 'status — только в обычном Terminal', 'warn'); return;
+    }
+    termAdd(termId, 'collecting host status…', 'muted');
+    const glitch = () => {
+      const g = '░▒▓█';
+      return [...Array(8)].map(()=>g[Math.random()*4|0]).join('');
+    };
+    await new Promise(r => setTimeout(r, 200));
+    termAdd(termId, '  ' + glitch() + ' iface…', 'muted');
+    await new Promise(r => setTimeout(r, 280));
+    termAdd(termId, '  ' + glitch() + ' mem…', 'muted');
+    await new Promise(r => setTimeout(r, 220));
+    const g = state.game;
+    const net = g.phoneWorld?.network;
+    const ram = typeof getRamUsage === 'function' ? getRamUsage(g) : { used: 0, total: 8 };
+    const files = (g.computer?.files || []).length;
+    const plugins = (g.computer?.installedPlugins || []).length;
+    const storageUsed = Math.min(98, 12 + files * 2 + plugins * 3);
+    const phone = g.player?.phoneNumber || ('+7-9' + String(100000000 + (Math.abs(hashStr(g.player?.walletId||'op'))%900000000)));
+    if (!g.player.phoneNumber) { g.player.phoneNumber = phone; scheduleSave(); }
+    const ssid = net?.ssid || net?.regionId || '— offline —';
+    const traffic = (20 + (Date.now()/1000|0) % 80) + ' Mbps ↓  /  ' + (5 + (Date.now()/700|0)%20) + ' Mbps ↑';
+    termAdd(termId, '┌─ HOST STATUS ──────────────────', 'green');
+    termAdd(termId, '  NET NAME    ' + (net?.regionId || 'none'), '');
+    termAdd(termId, '  WIFI/SSID   ' + ssid, '');
+    termAdd(termId, '  TRAFFIC     ' + traffic, '');
+    termAdd(termId, '  RAM         ' + (ram.used||0) + ' / ' + (ram.total||8) + ' GB', '');
+    termAdd(termId, '  DISK        ' + storageUsed + '% used · ' + (100-storageUsed) + '% free', '');
+    termAdd(termId, '  SERVER      local (standalone)', '');
+    termAdd(termId, '  OP PHONE    ' + phone, '');
+    termAdd(termId, '  WALLET      ' + (g.player?.walletId || '—'), 'muted');
+    termAdd(termId, '└────────────────────────────────', 'green');
+    return;
+  }
+
   if (c0 === 'plugins' || c0 === 'plugin') {
     const term = getTerm(termId);
     const mode = term?.mode || 'vanilla';
@@ -2160,80 +2273,100 @@ async function animatePluginBoot(termId, pluginId) {
 async function animateWorkTimed(termId, pluginId, totalMs, mode) {
   const start = performance.now();
   const regions = ['BAYS','MIDT','IRON','SOUT','OAKR','SHAD'];
-  const verbs = ['probe','sniff','handshake','resolve','fingerprint','correlate','decrypt-hdr','map-route','ttl-check','arp-scan'];
+  const verbs = ['probe','sniff','handshake','resolve','fingerprint','correlate','map-route','ttl-check','arp-scan','sync'];
   const randMac = () => [...Array(6)].map(() => ((Math.random()*256)|0).toString(16).padStart(2,'0')).join(':');
   const randPhone = () => 'PH-' + regions[(Math.random()*regions.length)|0] + '-' + String((Math.random()*550)|0).padStart(4,'0');
   const randIp = () => '10.' + ((Math.random()*30)|0) + '.' + ((Math.random()*200)|0) + '.' + (1+((Math.random()*250)|0));
-  const randIpPub = () => '172.16.' + ((Math.random()*20)|0) + '.' + (1+((Math.random()*250)|0));
   const randHex = (n=8) => [...Array(n)].map(() => ((Math.random()*16)|0).toString(16)).join('');
   const randBar = (pct) => {
-    const f = Math.max(0, Math.min(24, Math.round(pct/4.16)));
-    return '[' + '\u2588'.repeat(f) + '\u2591'.repeat(24-f) + ']';
+    const f = Math.max(0, Math.min(22, Math.round(pct/4.5)));
+    return '[' + '\u2588'.repeat(f) + '\u2591'.repeat(22-f) + ']';
   };
   const glitch = () => {
     const chars = '01\u2591\u2592\u2593\u2588/\\<>|#*';
-    return [...Array(12+((Math.random()*18)|0))].map(() => chars[(Math.random()*chars.length)|0]).join('');
+    return [...Array(8+((Math.random()*14)|0))].map(() => chars[(Math.random()*chars.length)|0]).join('');
   };
-  const titles = {
-    'net-link': 'NET LINK \u00b7 mesh bridge',
-    'net-analyzer': mode === 'scan' ? 'NET ANALYZER \u00b7 DEEP SWEEP' : 'NET ANALYZER \u00b7 work',
-    'phone-access': mode === 'attack' ? 'PHONE ACCESS \u00b7 BRUTE SEQUENCE' : mode === 'open' ? 'PHONE ACCESS \u00b7 device link' : 'PHONE ACCESS \u00b7 work'
+  const styles = {
+    scan: { title: 'NET ANALYZER \u00b7 DEEP SWEEP', border: true, pauseEvery: 3 },
+    connect: { title: 'NET LINK \u00b7 MESH BRIDGE', border: true, pauseEvery: 4 },
+    open: { title: 'PHONE ACCESS \u00b7 DEVICE LINK', border: true, pauseEvery: 3 },
+    attack: { title: 'PHONE ACCESS \u00b7 BRUTE SEQUENCE', border: true, pauseEvery: 2 },
+    default: { title: String(pluginId||'WORK').toUpperCase(), border: false, pauseEvery: 4 }
   };
-  const title = titles[pluginId] || String(pluginId).toUpperCase();
+  const st = styles[mode] || styles[pluginId === 'net-analyzer' ? 'scan' : pluginId === 'net-link' ? 'connect' : 'default'] || styles.default;
+  if (mode === 'scan' || pluginId === 'net-analyzer') Object.assign(st, styles.scan);
+  if (mode === 'connect' || pluginId === 'net-link') Object.assign(st, styles.connect);
+  if (mode === 'open') Object.assign(st, styles.open);
+  if (mode === 'attack') Object.assign(st, styles.attack);
+
   termAdd(termId, '', '');
-  termAdd(termId, '\u2554' + '\u2550'.repeat(40) + '\u2557', 'green');
-  termAdd(termId, '\u2551  ' + (title + '                                        ').slice(0, 38) + '\u2551', 'green');
-  termAdd(termId, '\u255a' + '\u2550'.repeat(40) + '\u255d', 'green');
-  if (pluginId === 'net-analyzer' || mode === 'scan') {
-    termAdd(termId, '  init modules: radio \u00b7 dhcp \u00b7 arp \u00b7 ssid-db \u00b7 geo-mesh', 'muted');
+  if (st.border) {
+    termAdd(termId, '\u2554' + '\u2550'.repeat(38) + '\u2557', 'green');
+    termAdd(termId, '\u2551  ' + (st.title + '                                      ').slice(0, 36) + '\u2551', 'green');
+    termAdd(termId, '\u255a' + '\u2550'.repeat(38) + '\u255d', 'green');
+  } else {
+    termAdd(termId, '>> ' + st.title, 'green');
   }
+  termAdd(termId, '  phase 0 \u2014 init buffers', 'muted');
+
   let lastPct = -1;
   let tick = 0;
+  let phase = 0;
+  const phases = mode === 'attack'
+    ? ['dictionary', 'mask', 'timing-skew', 'pin-space']
+    : mode === 'scan'
+      ? ['radio', 'dhcp', 'arp', 'correlate', 'report']
+      : mode === 'open'
+        ? ['handshake', 'session', 'mount']
+        : ['link', 'auth', 'tunnel'];
+
   return new Promise(resolve => {
-    const step = () => {
+    const step = async () => {
       const elapsed = performance.now() - start;
       const pct = Math.min(100, (elapsed / Math.max(1, totalMs)) * 100);
       tick++;
-      if (pluginId === 'net-analyzer' || mode === 'scan') {
-        if (tick % 2 === 0) {
+      // phase banners with pause
+      const phaseIdx = Math.min(phases.length - 1, Math.floor((pct / 100) * phases.length));
+      if (phaseIdx > phase) {
+        phase = phaseIdx;
+        termAdd(termId, '  \u2500\u2500 phase ' + phases[phase] + ' \u2500\u2500', 'green');
+        await new Promise(r => setTimeout(r, 180 + Math.random() * 200));
+      }
+      if (tick % (st.pauseEvery || 3) === 0) {
+        if (mode === 'attack') {
+          termAdd(termId, '  try ****  cand=' + (1000+((Math.random()*9000)|0)) + '  ' + glitch() + '  ' + randBar(pct), Math.random()>0.75?'warn':'');
+        } else if (mode === 'scan' || pluginId === 'net-analyzer') {
           const lines = [
-            '  > ' + verbs[(Math.random()*verbs.length)|0] + ' ' + randIp() + '  ttl=' + (32+((Math.random()*30)|0)) + '  ' + glitch(),
-            '  > MAC ' + randMac() + '  \u2192  node ' + randPhone() + '  rssi=-' + (40+((Math.random()*50)|0)) + 'dBm',
-            '  > SSID mesh-' + regions[(Math.random()*regions.length)|0].toLowerCase() + '-' + randHex(3) + '  ch=' + (1+((Math.random()*11)|0)),
-            '  > fingerprint 0x' + randHex(8) + '  entropy=' + (Math.random()).toFixed(3) + '  ' + randBar(pct),
-            '  > correlate session ' + randHex(4) + ':' + randHex(4) + '  hop=' + (1+((Math.random()*6)|0)) + '  rtt=' + (Math.random()*40).toFixed(1) + 'ms',
-            '  > dhcp-lease ' + randIpPub() + '  vendor=NULLCORE  flags=0x' + randHex(2),
-            '  > dump frame #' + (1000+((Math.random()*9000)|0)) + '  len=' + (40+((Math.random()*400)|0)) + 'B  ' + glitch(),
-            '  > route ' + randIp() + ' \u2192 ' + randIpPub() + '  via mesh-gw-' + ((Math.random()*9)|0)
+            '  > ' + verbs[(Math.random()*verbs.length)|0] + ' ' + randIp() + '  ' + glitch(),
+            '  > MAC ' + randMac() + '  node ' + randPhone(),
+            '  > fingerprint 0x' + randHex(6) + '  ' + randBar(pct),
+            '  > frame #' + (1000+((Math.random()*8000)|0)) + '  len=' + (40+((Math.random()*300)|0))
           ];
-          termAdd(termId, lines[(Math.random()*lines.length)|0], Math.random() > 0.85 ? 'warn' : '');
+          termAdd(termId, lines[(Math.random()*lines.length)|0], Math.random()>0.88?'warn':'');
+        } else if (mode === 'open') {
+          termAdd(termId, '  session ' + randHex(4) + '  device-link  ' + randBar(pct), '');
+        } else {
+          termAdd(termId, '  handshake ' + randMac() + '  tunnel=' + randHex(5) + '  ' + randBar(pct), 'green');
         }
-        if (Math.floor(pct / 12) > Math.floor(lastPct / 12)) {
-          termAdd(termId, '  ' + randBar(pct) + '  ' + (pct|0) + '%  collecting\u2026', 'green');
-        }
-      } else if (mode === 'attack') {
-        if (tick % 2 === 0) {
-          termAdd(termId, '  try PIN ****  candidate=' + (1000+((Math.random()*9000)|0)) + '  ' + glitch() + '  ' + randBar(pct), Math.random()>0.7?'warn':'');
-        }
-      } else if (pluginId === 'net-link' || mode === 'connect') {
-        if (tick % 3 === 0) {
-          termAdd(termId, '  handshake ' + randMac() + '  auth=OK  tunnel=' + randHex(6) + '  ' + randBar(pct), 'green');
-        }
-      } else if (tick % 3 === 0) {
-        termAdd(termId, '  work ' + randHex(6) + '  ' + randBar(pct) + '  ' + (pct|0) + '%', '');
+      }
+      if (Math.floor(pct / 15) > Math.floor(lastPct / 15)) {
+        termAdd(termId, '  ' + randBar(pct) + '  ' + (pct|0) + '%', 'muted');
+        // micro-pause for effect
+        await new Promise(r => setTimeout(r, 90 + Math.random() * 120));
       }
       lastPct = pct;
       if (elapsed >= totalMs) {
         termAdd(termId, '  ' + randBar(100) + '  100%', 'green');
-        termAdd(termId, '\u2714 ' + title + ' \u2014 complete', 'green');
+        termAdd(termId, '\u2714 ' + st.title + ' \u2014 complete', 'green');
         resolve();
         return;
       }
-      setTimeout(step, 90 + Math.random() * 110);
+      setTimeout(step, 100 + Math.random() * 130);
     };
     step();
   });
 }
+
 
 
 
@@ -2439,19 +2572,37 @@ function renderMail(g) {
 function renderBank(g) {
   const status = bankStatus(g);
   const risk = bankRisk(g);
-  const tx = (g.economy.transactions || []).slice(0, 30);
-  const missing = (risk.missing || []).map(id => getPlugin(id)?.name || id);
-  return `<div class="app-heading"><div><div class="eyebrow">ASTER UNION</div><h2>Кошелёк оператора</h2><p>Личные CR. Вход в чужие счета — на сайте asterbank.null</p></div><span class="badge">WALLET</span></div>
-  <div class="bank-balance"><span>AVAILABLE CREDITS</span><strong>${fmt(g.economy.credits)} CR</strong>
-  <small>wallet ${esc(g.player.walletId||'—')}</small></div>
-  <div class="panel section-gap">
-    <div class="kv"><span>Номер кошелька</span><b>${esc(g.player.walletId||'—')}</b></div>
-    <button type="button" class="btn tiny" data-action="copy-text" data-text="${esc(g.player.walletId||'')}">КОПИРОВАТЬ</button>
-    <p class="muted small section-gap">Чтобы войти в счёт NPC: Browser → asterbank.null → Вход (логин/пароль из SMS).</p>
+  const tx = (g.economy.transactions || []).slice(0, 12);
+  const wallet = g.player.walletId || '—';
+  const bal = (g.economy && g.economy.credits != null) ? g.economy.credits : 0;
+  // card digits from wallet hash
+  let h = 0; const s = String(wallet);
+  for (let i=0;i<s.length;i++) h = (h*31 + s.charCodeAt(i))|0;
+  const pan = '4276 ' + String(1000 + Math.abs(h%9000)).slice(0,4) + ' ' + String(1000 + Math.abs((h>>4)%9000)).slice(0,4) + ' ' + String(1000 + Math.abs((h>>8)%9000)).slice(0,4);
+  const exp = String(1 + Math.abs(h%12)).padStart(2,'0') + '/' + String(28 + Math.abs(h%5));
+  const cvv = String(100 + Math.abs(h%900));
+  const issuer = 'ASTER UNION · VIRTUAL';
+  return `<div class="app-heading"><div><div class="eyebrow">ASTER UNION</div><h2>Private Card</h2><p>Премиальный кошелёк оператора</p></div><span class="badge">CR</span></div>
+  <div class="bank-card-visual">
+    <div class="bank-card-chip"></div>
+    <div class="bank-card-brand">ASTER</div>
+    <div class="bank-card-pan">${esc(pan)}</div>
+    <div class="bank-card-row"><span>VALID ${esc(exp)}</span><span>CVV ${esc(cvv)}</span></div>
+    <div class="bank-card-name">${esc((g.player.nickname||'OPERATOR').toUpperCase())}</div>
+    <div class="bank-card-issuer">${esc(issuer)}</div>
   </div>
-  ${status.locked?`<div class="notice danger section-gap"><b>БЛОКИРОВКА</b> ${humanLeft(status.remaining)}</div>`:''}
-  <div class="panel section-gap"><div class="panel-title"><span>ИСТОРИЯ</span></div>
-    ${tx.map(t=>`<div class="list-row"><div class="list-main"><strong>${esc(t.note||t.reason||t.type||'tx')}</strong><small>${new Date(t.at||0).toLocaleString('ru-RU')}</small></div><span>${fmt(t.amount)} CR</span></div>`).join('')||'<div class="muted">пусто</div>'}
+  <div class="bank-balance premium"><span>AVAILABLE</span><strong>${fmt(bal)} CR</strong>
+    <small>wallet ${esc(wallet)}</small></div>
+  <div class="panel section-gap bank-details">
+    <div class="kv"><span>Номер кошелька</span><b>${esc(wallet)}</b></div>
+    <div class="kv"><span>Код выпуска</span><b>AU-${esc(String(100000+Math.abs(h%900000)))}</b></div>
+    <div class="kv"><span>CVV (оборот)</span><b>${esc(cvv)}</b></div>
+    <div class="kv"><span>Сеть</span><b>Aster Mesh · virtual</b></div>
+    <button type="button" class="btn tiny" data-action="copy-text" data-text="${esc(wallet)}">КОПИРОВАТЬ WALLET</button>
+    <p class="muted small section-gap">Вход в счета NPC — Browser → asterbank.null (логин/пароль из SMS).</p>
+  </div>
+  <div class="panel section-gap"><div class="eyebrow">История</div>
+    ${tx.length ? tx.map(t=>`<div class="list-row"><div class="list-main"><strong>${esc(t.reason||t.type||'tx')}</strong><small>${t.at?new Date(t.at).toLocaleString('ru-RU'):''}</small></div><b class="${(t.type==='expense'||t.amount<0)?'text-red':'text-green'}">${t.type==='expense'?'−':'+'}${fmt(Math.abs(t.amount||0))}</b></div>`).join('') : '<div class="muted">Пока пусто</div>'}
   </div>`;
 }
 

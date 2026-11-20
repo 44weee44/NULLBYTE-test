@@ -114,7 +114,6 @@ export function buildNetworkReport(regionId, now = Date.now()) {
       `  ROLE     ${p.role || '—'}`,
       `  NUMBER   ${p.number}`,
       `  MODEL    ${p.model}`,
-      `  DEFENSE  ${p.protection}`,
       ''
     ].join('\n');
   });
@@ -308,7 +307,11 @@ export function accessPhone(state, phoneId) {
     ...(state.phoneWorld.access[phone.id] || {}),
     openedAt: Date.now(),
     unlocked: false,
-    blocked: state.phoneWorld.access[phone.id]?.blocked || false
+    blocked: state.phoneWorld.access[phone.id]?.blocked || false,
+    protection: phone.protection,
+    ownerName: phone.ownerName,
+    number: phone.number,
+    role: phone.role
   };
   if (state.phoneWorld.access[phone.id].blocked) {
     return { ok: false, reason: 'Телефон заблокирован навсегда (block)' };

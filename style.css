@@ -1535,3 +1535,142 @@ html,body{background:#0a0a0a!important;font-size:12px!important}
   transform: translateY(8px);
   transition: opacity 140ms var(--ease-soft), transform 140ms var(--ease-soft);
 }
+
+/* mission cards */
+.contract-card, .mission-card {
+  border: 1px solid #2a3a48;
+  border-radius: 10px;
+  background: linear-gradient(165deg, #121a22 0%, #0c1218 100%);
+  padding: 12px 14px;
+  margin-bottom: 10px;
+  box-shadow: 0 4px 18px #0005;
+  transition: border-color .15s, transform .15s;
+}
+.contract-card:hover, .mission-card:hover {
+  border-color: #3d6a80;
+}
+.mission-meta, .contract-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  font-size: 11px;
+  color: #8aa0b0;
+  margin-top: 6px;
+}
+.mission-meta span, .contract-meta span {
+  background: #152029;
+  border: 1px solid #2a3a48;
+  border-radius: 6px;
+  padding: 2px 8px;
+}
+.mission-expire {
+  color: #e0af68;
+  font-size: 11px;
+}
+
+/* premium bank card */
+.bank-card-visual {
+  position: relative;
+  border-radius: 16px;
+  padding: 18px 18px 14px;
+  margin: 10px 0 14px;
+  background: linear-gradient(135deg, #1a2330 0%, #0f1720 40%, #1a1528 100%);
+  border: 1px solid #3a4a5c;
+  box-shadow: 0 12px 40px #0008, inset 0 1px 0 #ffffff14;
+  min-height: 150px;
+  overflow: hidden;
+}
+.bank-card-visual::before {
+  content: '';
+  position: absolute; inset: -40% -20% auto auto;
+  width: 180px; height: 180px; border-radius: 50%;
+  background: radial-gradient(circle, #5ec8ff22, transparent 70%);
+  pointer-events: none;
+}
+.bank-card-chip {
+  width: 36px; height: 28px; border-radius: 6px;
+  background: linear-gradient(135deg, #d4b86a, #a68b3c);
+  margin-bottom: 18px;
+  box-shadow: inset 0 0 0 1px #0004;
+}
+.bank-card-brand {
+  position: absolute; top: 16px; right: 18px;
+  font: 700 13px/1 system-ui, sans-serif;
+  letter-spacing: .18em;
+  color: #e8eef6;
+  opacity: .9;
+}
+.bank-card-pan {
+  font: 600 18px/1.3 "SF Mono", ui-monospace, monospace;
+  letter-spacing: .12em;
+  color: #f2f6fa;
+  margin-bottom: 12px;
+}
+.bank-card-row {
+  display: flex; gap: 18px;
+  font: 12px/1.2 system-ui, sans-serif;
+  color: #9ab;
+  margin-bottom: 8px;
+}
+.bank-card-name {
+  font: 600 13px/1.2 system-ui, sans-serif;
+  letter-spacing: .08em;
+  color: #dce6f0;
+}
+.bank-card-issuer {
+  margin-top: 6px;
+  font-size: 10px;
+  color: #6a7a8a;
+  letter-spacing: .06em;
+}
+.bank-balance.premium {
+  border: 1px solid #2a3a48;
+  border-radius: 12px;
+  padding: 12px 14px;
+  background: #0c1218;
+}
+.bank-balance.premium strong {
+  font-size: 22px;
+  letter-spacing: .02em;
+}
+
+/* NBS IDE refresh */
+.app-window[data-window="ide"] [data-content] {
+  background: #0a0e14;
+}
+.app-window[data-window="ide"] .ide-layout,
+.ide-shell {
+  display: grid;
+  gap: 8px;
+}
+.ide-tabs {
+  display: flex; gap: 4px; flex-wrap: wrap;
+  border-bottom: 1px solid #1e2a36;
+  padding-bottom: 6px;
+}
+.ide-tab {
+  background: #121820;
+  border: 1px solid #243040;
+  border-radius: 6px 6px 0 0;
+  padding: 4px 10px;
+  font-size: 11px;
+  color: #9ab;
+}
+.ide-tab.on {
+  background: #1a2430;
+  color: #e8f0f8;
+  border-color: #3d6a80;
+}
+#nbsEditor, .nbs-editor, textarea.nbs {
+  background: #0d1118 !important;
+  border: 1px solid #243040 !important;
+  border-radius: 8px !important;
+  color: #c8d6e4 !important;
+  font: 12px/1.45 "SF Mono", ui-monospace, monospace !important;
+  tab-size: 2;
+  box-shadow: inset 0 0 0 1px #0006;
+}
+.ide-toolbar {
+  display: flex; gap: 6px; flex-wrap: wrap;
+  padding: 6px 0;
+}

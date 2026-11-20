@@ -315,6 +315,8 @@ export function appraiseFileInstance(file) {
   const band = bands[file.rarity] || [0, 600];
   price = Math.max(band[0], Math.min(band[1], price));
   if (file.integrity_state === 'corrupted' && info <= 1) price = Math.min(price, 2);
+  if (price < 1 && file.rarity !== 'trash' && file.file_type !== 'corrupted') price = Math.max(3, base || 3);
+
   const reason = mult < 1
     ? 'Экземпляр ранее продавался рынку (уценка).'
     : (file.integrity_state === 'corrupted' ? 'Повреждённый файл — низкая ценность.'
@@ -810,52 +812,122 @@ export function cancelMission(state, missionId) {
 /** Keep 3–4 available offers; never touch accepted/submitted. */
 export function rotateMissionBoard(state, now = Date.now(), force = false) {
   ensureIntel(state);
-  // current build: only phone-* can be offered
+  if (!state.intel.boardMeta) state.intel.boardMeta = { hourStart: 0, slots: [], lastMailAt: 0 };
+
+  // lock non-phone
   state.missions.items.forEach(m => {
-    if (!String(m.id||'').startsWith('phone-') && m.status === 'available') m.status = 'locked';
+    if (!String(m.id || '').startsWith('phone-') && m.status === 'available') m.status = 'locked';
   });
 
-  if (!state.intel.nextBoardAt) state.intel.nextBoardAt = now + 20 * 60 * 1000;
-  if (!force && state.intel.nextBoardAt > now) {
-    return { rotated: false, nextBoardAt: state.intel.nextBoardAt, offered: state.intel.boardIds || [] };
+  const HOUR = 60 * 60 * 1000;
+  const SLOT_LIFE = 30 * 60 * 1000; // each offer lives 30 min
+  const hourStart = Math.floor(now / HOUR) * HOUR;
+  const meta = state.intel.boardMeta;
+
+  // New hour → reset board (keep accepted/submitted)
+  if (meta.hourStart !== hourStart || force) {
+    meta.hourStart = hourStart;
+    meta.slots = [];
+    // expire previous available offers
+    state.missions.items.forEach(m => {
+      if (m.status === 'available' && String(m.id || '').startsWith('phone-')) {
+        m.status = 'locked';
+        m.boardExpiresAt = 0;
+      }
+    });
+    // schedule up to 4 staggered spawn times within the hour
+    const count = 2 + (Math.abs(hashStr(state.meta?.seed || 'nb' + hourStart)) % 3); // 2..4
+    const used = new Set();
+    for (let i = 0; i < count; i++) {
+      // stagger within hour; first slot appears almost immediately
+      let tOff = i === 0 ? 0 : Math.floor((8 + i * 11 + (hashStr(state.meta?.seed + ':slot:' + hourStart + ':' + i) % 9)) % 50) * 60 * 1000;
+      // pick unique mission template
+      const eligible = state.missions.items.filter(m =>
+        String(m.id || '').startsWith('phone-') &&
+        (m.status === 'locked' || m.status === 'available' || m.status === 'expired') &&
+        m.status !== 'accepted' && m.status !== 'submitted' &&
+        (m.minLevel || 1) <= state.player.level &&
+        !used.has(m.id)
+      );
+      if (!eligible.length) break;
+      const pick = eligible[Math.abs(hashStr(hourStart + ':' + i + ':' + (state.meta?.seed || ''))) % eligible.length];
+      used.add(pick.id);
+      // force uniqueness: rebind phone target with hour salt
+      try { bindPhoneMissionTarget(pick, (state.meta?.seed || 'nb') + hourStart + i); } catch {}
+      meta.slots.push({
+        missionId: pick.id,
+        spawnAt: hourStart + tOff,
+        expiresAt: hourStart + tOff + SLOT_LIFE,
+        spawned: false
+      });
+    }
+    meta.slots.sort((a, b) => a.spawnAt - b.spawnAt);
+    // hourly demand mail from NPC (once per hour)
+    if (!meta.lastMailAt || meta.lastMailAt < hourStart) {
+      meta.lastMailAt = hourStart;
+      try {
+        if (!state.mail) state.mail = { inbox: [], outbox: [], nextId: 1 };
+        if (!state.mail.inbox) state.mail.inbox = [];
+        state.mail.inbox.unshift({
+          id: 'mail_demand_' + hourStart,
+          from: 'BlackWire Desk',
+          subject: 'Сводка за час — жду результат',
+          body: 'Оператор, час закрыт. Если контракт был в работе — пришли отчёт. Новые заявки появятся в течение часа (до 4, каждая 30 мин).',
+          at: now,
+          read: false
+        });
+      } catch {}
+    }
   }
-  state.intel.nextBoardAt = now + 20 * 60 * 1000;
-  unlockMissions(state);
-  const activeIds = new Set(
-    state.missions.items.filter(m => m.status === 'accepted' || m.status === 'submitted').map(m => m.id)
-  );
-  const eligible = state.missions.items.filter(m =>
-    m.status === 'available' && !activeIds.has(m.id) && m.minLevel <= state.player.level
-  );
-  const bucket = Math.floor(now / (20 * 60 * 1000));
-  const scored = eligible.map(m => {
-    let h = 2166136261;
-    const s = `${state.meta?.seed || 'nb'}:${bucket}:${m.id}`;
-    for (let k = 0; k < s.length; k++) { h ^= s.charCodeAt(k); h = Math.imul(h, 16777619); }
-    return { m, score: h >>> 0 };
-  }).sort((a, b) => a.score - b.score);
-  const want = Math.min(4, Math.max(3, Math.min(eligible.length, 3 + (bucket % 2))));
-  const picked = [];
-  const seenCat = new Set();
-  for (const { m } of scored) {
-    if (picked.length >= want) break;
-    const cat = m.category || 'info';
-    if (seenCat.has(cat)) continue;
-    picked.push(m); seenCat.add(cat);
+
+  // Spawn / expire slots
+  const offered = [];
+  for (const slot of meta.slots) {
+    const m = state.missions.items.find(x => x.id === slot.missionId);
+    if (!m) continue;
+    if (m.status === 'accepted' || m.status === 'submitted') {
+      offered.push(m.id);
+      continue;
+    }
+    if (now >= slot.spawnAt && now < slot.expiresAt) {
+      if (m.status !== 'available') {
+        m.status = 'available';
+        m.boardExpiresAt = slot.expiresAt;
+        try { bindPhoneMissionTarget(m, (state.meta?.seed || 'nb') + slot.spawnAt); } catch {}
+      }
+      slot.spawned = true;
+      offered.push(m.id);
+    } else if (now >= slot.expiresAt && m.status === 'available') {
+      m.status = 'locked';
+      m.boardExpiresAt = 0;
+    }
   }
-  for (const { m } of scored) {
-    if (picked.length >= want) break;
-    if (!picked.includes(m)) picked.push(m);
+
+  state.intel.boardIds = offered;
+  // next tick when something changes
+  let nextAt = hourStart + HOUR;
+  for (const slot of meta.slots) {
+    if (now < slot.spawnAt) nextAt = Math.min(nextAt, slot.spawnAt);
+    else if (now < slot.expiresAt) nextAt = Math.min(nextAt, slot.expiresAt);
   }
-  state.intel.boardIds = picked.map(m => m.id);
-  return { rotated: true, nextBoardAt: state.intel.nextBoardAt, offered: state.intel.boardIds };
+  state.intel.nextBoardAt = nextAt;
+  return { rotated: true, nextBoardAt: nextAt, offered };
 }
 
-export function missionBoardTimer(state, now = Date.now()) {
-  ensureIntel(state);
-  if (!state.intel.nextBoardAt) state.intel.nextBoardAt = now + 20 * 60 * 1000;
-  return Math.max(0, state.intel.nextBoardAt - now);
+function hashStr(s) {
+  let h = 2166136261;
+  const str = String(s || '');
+  for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return h >>> 0;
 }
+
+
+
+export function missionBoardTimer(state, now = Date.now()) {
+  const next = Number(state?.intel?.nextBoardAt) || (now + 60000);
+  return Math.max(0, next - now);
+}
+
 
 
 export function getSite(state,siteId) { return state.world.sites.find(s=>s.id===siteId); }
@@ -1742,7 +1814,21 @@ if (cmd === 'connect') {
     }
     if (cmd === 'status') {
       const id = state._phoneTarget;
-      return { ok: true, lines: [{ text: id ? `Active: ${id}` : 'Нет активного PHONE_ID', type: id ? 'green' : 'muted' }] };
+      if (!id) return { ok: true, lines: [{ text: 'Нет активного PHONE_ID · open <id>', type: 'muted' }] };
+      const acc = (state.phoneWorld?.access && state.phoneWorld.access[id]) || {};
+      const unlocked = !!acc.unlocked;
+      // protection stored at open time if present
+      const prot = acc.protection || '—';
+      const name = acc.ownerName || '—';
+      const num = acc.number || '—';
+      return { ok: true, lines: [
+        { text: '┌─ PHONE ACCESS STATUS', type: 'green' },
+        { text: '  TARGET     ' + id, type: '' },
+        { text: '  OWNER      ' + name, type: '' },
+        { text: '  NUMBER     ' + num, type: '' },
+        { text: '  DEFENSE    ' + String(prot).toUpperCase() + (unlocked ? ' · UNLOCKED' : ' · LOCKED'), type: 'blue' },
+        { text: '  SESSION    ' + (unlocked ? 'active' : 'need attack / pin'), type: 'muted' }
+      ] };
     }
     if (cmd === 'attack') {
       const pid = state._phoneTarget;
