@@ -1726,3 +1726,101 @@ html,body{background:#0a0a0a!important;font-size:12px!important}
 .app-heading {
   animation: nbFadeUp 160ms var(--ease-out) both;
 }
+
+/* Telegram WebView: no page swipe collapse */
+html, body {
+  position: fixed !important;
+  inset: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  overflow: hidden !important;
+  overscroll-behavior: none !important;
+  touch-action: manipulation;
+}
+.desktop-shell, #desktopWorkspace, .window-layer {
+  overscroll-behavior: none !important;
+  touch-action: manipulation;
+}
+.window-bar, .nb-term-titlebar {
+  touch-action: none !important;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.app-window.is-dragging {
+  touch-action: none !important;
+}
+
+/* Terminal layout: title | scroll | input dock */
+.nb-term, .term-root.nb-term {
+  display: flex !important;
+  flex-direction: column !important;
+  height: 100% !important;
+  min-height: 0 !important;
+  max-height: 100% !important;
+  overflow: hidden !important;
+}
+.nb-term-titlebar {
+  flex: 0 0 auto !important;
+}
+.nb-term .terminal-output.screen,
+.terminal-output.screen {
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
+  overscroll-behavior: contain !important;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y !important;
+  scroll-behavior: auto !important;
+}
+.term-input-dock {
+  flex: 0 0 auto !important;
+  border-top: 1px solid #1e2a36;
+  background: #0a1016;
+  padding: 6px 8px;
+  z-index: 2;
+}
+.term-input-dock .term-inline-form,
+.term-input-dock .promptrow {
+  display: flex !important;
+  align-items: center;
+  gap: 6px;
+  margin: 0 !important;
+  width: 100%;
+}
+.term-input-dock .term-inline-input {
+  flex: 1 1 auto !important;
+  min-width: 0 !important;
+  width: 100% !important;
+  border: 0 !important;
+  background: transparent !important;
+  color: #e8f0f8 !important;
+  font: 14px/1.3 ui-monospace, monospace !important;
+  outline: none !important;
+  pointer-events: auto !important;
+  -webkit-user-select: text !important;
+  user-select: text !important;
+}
+
+/* Generic window content scroll */
+.app-window {
+  touch-action: manipulation;
+}
+.app-window .window-content,
+.app-window [data-content] {
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
+  overscroll-behavior: contain !important;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y !important;
+  scroll-behavior: auto !important;
+  pointer-events: auto !important;
+}
+input, textarea, select {
+  pointer-events: auto !important;
+  -webkit-user-select: text !important;
+  user-select: text !important;
+  touch-action: manipulation !important;
+}

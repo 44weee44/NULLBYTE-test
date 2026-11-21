@@ -268,8 +268,14 @@ async function finishBoot() {
     if(tg){
       tg.ready?.();
       tg.expand?.();
+      try { tg.disableVerticalSwipes?.(); } catch(e) {}
+      try { if (typeof tg.enableClosingConfirmation === 'function') tg.enableClosingConfirmation(); } catch(e) {}
       tg.setHeaderColor?.('#0c151d');
       tg.setBackgroundColor?.('#0b1219');
+      // keep expanded if user gesture collapses
+      try {
+        tg.onEvent?.('viewportChanged', () => { try { tg.expand?.(); } catch(e) {} });
+      } catch(e) {}
       console.log('[NULLBYTE] CloudStorage', tg.CloudStorage ? 'YES' : 'NO');
     } else {
       console.warn('[NULLBYTE] Telegram.WebApp missing — local only');
@@ -702,6 +708,7 @@ function openApp(id) {
 
 function onGlobalPointerMove(e){
   const d=state.drag;if(!d)return;
+  try { e.preventDefault(); } catch(err) {}
   const element=document.querySelector(`[data-window="${d.id}"]`);
   if(!element)return;
   if(d.resize){
@@ -728,6 +735,12 @@ if(!window.__nbDragGlobal){
   document.addEventListener('pointermove',onGlobalPointerMove,{passive:false});
   document.addEventListener('pointerup',onGlobalPointerUp);
   document.addEventListener('pointercancel',onGlobalPointerUp);
+  // Prevent Telegram WebView from swallowing vertical swipe while dragging windows
+  document.addEventListener('touchmove', function(e){
+    if (state.drag) {
+      e.preventDefault();
+    }
+  }, { passive: false });
 }
 
 function wireWindow(id,element) {
@@ -743,11 +756,15 @@ function wireWindow(id,element) {
   bar.addEventListener('pointerdown',e=>{
     if(e.target.closest('.window-controls')||state.opened.get(id)?.maximized)return;
     if(e.button!=null && e.button!==0)return;
-    if(e.target.closest('input,textarea,button'))return;
+    if(e.target.closest('input,textarea,button,select'))return;
     const rect=element.getBoundingClientRect(),workspace=$('desktopWorkspace').getBoundingClientRect();
-    state.drag={id,pointerId:e.pointerId,dx:e.clientX-rect.left,dy:e.clientY-rect.top,workspace};element.classList.add('is-dragging');
-    try{bar.setPointerCapture(e.pointerId);}catch{}focusWindow(id);e.preventDefault();
-  });
+    state.drag={id,pointerId:e.pointerId,dx:e.clientX-rect.left,dy:e.clientY-rect.top,workspace};
+    element.classList.add('is-dragging');
+    try{bar.setPointerCapture(e.pointerId);}catch{}
+    focusWindow(id);
+    e.preventDefault();
+    e.stopPropagation();
+  }, { passive: false });
   bar.addEventListener('pointermove',e=>{
     const d=state.drag;if(!d||d.id!==id||d.pointerId!==e.pointerId||d.resize)return;
     const area=$('desktopWorkspace');const ww=element.offsetWidth,wh=element.offsetHeight;const x=Math.max(-ww+80,Math.min(area.clientWidth-60,e.clientX-d.workspace.left-d.dx)),y=Math.max(0,Math.min(area.clientHeight-40,e.clientY-d.workspace.top-d.dy));
@@ -2015,9 +2032,7 @@ function termAdd(termId, text, type = '') {
       row.className = 'term-line' + (type ? ' ' + type : '');
       row.textContent = text;
     }
-    const form = out.querySelector('.term-inline-form, .term-boot-wait');
-    if (form) out.insertBefore(row, form);
-    else out.appendChild(row);
+    out.appendChild(row);
     if (term.scrollPin !== false) {
       // instant jump — avoid smooth-scroll fight
       const prev = out.style.scrollBehavior;
@@ -2501,11 +2516,12 @@ function renderTerminal(g, termId) {
   const booting = !!(term && (term.booting || (term.busy && term.bootStarted && !term.bootDone)));
   // Input only after boot — no typing during load
   const formHtml = booting
-    ? `<div class="term-boot-wait muted">⏳ boot… ввод появится после загрузки</div>`
+    ? `<div class="term-boot-wait muted">⏳ boot… ввод после загрузки</div>`
     : `<form class="term-inline-form terminal-form promptrow" data-term="${esc(termId)}">
       <span class="term-inline-prompt prompt">${esc(prompt)}</span>
-      <input class="term-inline-input" name="command" type="text" autocomplete="off" spellcheck="false" autocapitalize="off" autocorrect="off" enterkeyhint="send" aria-label="Команда">
+      <input class="term-inline-input" name="command" type="text" autocomplete="off" spellcheck="false" autocapitalize="off" autocorrect="off" enterkeyhint="send" inputmode="text" aria-label="Команда">
     </form>`;
+  // Output scrolls alone; input is fixed under it (stable typing + scroll)
   return `<div class="term-root nb-term term-mode-${esc(mode)}" data-term="${esc(termId)}">
   <div class="nb-term-titlebar term-bar-${esc(mode)}">
     <img class="termglyph" src="dragon.png" alt="" draggable="false">
@@ -2513,10 +2529,8 @@ function renderTerminal(g, termId) {
     <span class="path">:~/${esc(modeLabel)}</span>
     <span class="term-mode-badge">${esc(modeLabel)}</span>
   </div>
-  <div class="terminal-output screen" data-term-out="${esc(termId)}">
-    ${body}
-    ${formHtml}
-  </div>
+  <div class="terminal-output screen" data-term-out="${esc(termId)}">${body}</div>
+  <div class="term-input-dock">${formHtml}</div>
 </div>`;
 }
 
