@@ -90,11 +90,22 @@ function tickMailDeliveries() {
   try {
     if (state.game && typeof processMailDeliveries === 'function') {
       const done = processMailDeliveries(state.game);
-      if (done && done.length) { scheduleSave(); if (state.opened.has('mail')) renderWindow('mail'); }
+      if (done && done.length) {
+        scheduleSave();
+        if (state.opened.has('mail')) renderWindow('mail');
+        refreshEconomyUi();
+      }
     }
   } catch (e) {}
 }
 setInterval(tickMailDeliveries, 3000);
+function refreshEconomyUi() {
+  try {
+    for (const id of ['bank','profile','darkshop','computer','blackwire']) {
+      if (state.opened?.has(id)) renderWindow(id);
+    }
+  } catch(e) {}
+}
 function scheduleSave() { clearTimeout(state.saveTimer);state.saveTimer=setTimeout(persist,250); }
 async function persist() {
   if(!state.game||state.saveBlocked)return;
@@ -1127,11 +1138,10 @@ function renderProfile(g) {
   <section class="profile-hero">
     <div class="profile-avatar">${avatar}</div>
     <div class="profile-ident">
-      <div class="avatar">${esc((p.nickname||'OP').slice(0,2).toUpperCase())}</div>
       <div><h3>${esc(p.nickname||'operator')}</h3>
-      <small>TG: ${esc(p.telegramId||'—')}</small></div>
+      <small>OPERATOR · LVL ${p.level}</small></div>
     </div>
-    <div class="profile-rank"><b>LVL ${p.level}</b><small>OPERATOR</small></div>
+    <div class="profile-rank"><b>LVL ${p.level}</b><small>ACTIVE</small></div>
   </section>
   <div class="panel section-gap">
     <div class="panel-title"><span>ОПЫТ</span><small>${fmt(p.xp)} XP</small></div>
@@ -1934,10 +1944,11 @@ async function runTerminalCommand(termId, raw) {
     try {
       // restore loaders for heavy commands
       const loadCmds = {
-        'net-analyzer': { scan: 7000, analyze: 7000 },
-        'net-link': { connect: 6000, disconnect: 1200 },
-        'phone-access': { open: 3000, attack: 4000, block: 2000 },
-        'mail-drop': { drop: 3500, send: 3500 }
+        'net-link': { connect: 8500, scan: 11000, analyze: 11000, disconnect: 2200 },
+        'net-analyzer': { scan: 11000, analyze: 11000 },
+        'phone-access': { open: 6500, attack: 9500, block: 4000 },
+        'mail-drop': { craft: 4500, drop: 4000, send: 4000 },
+        'sms-bomber': { bomb: 7000 }
       };
       const ms = (loadCmds[term.plugin] && loadCmds[term.plugin][c0]) || 0;
       if (ms > 0 && typeof animateWorkTimed === 'function') {
@@ -1955,6 +1966,7 @@ async function runTerminalCommand(termId, raw) {
       if (result && result.clear) clearTerminalView(termId);
       if (result && (result.closePhoneLab || result.clearPhone)) {
         state._phoneTarget = null; state.phoneUnlocked = null; state.pinInput = '';
+        try { refreshPhoneLab(); } catch(e) {}
       }
       if (result && result.progressUpdated) scheduleSave();
       if (result && result.refresh) refreshOpenApps();
@@ -1986,7 +1998,7 @@ async function runTerminalCommand(termId, raw) {
       termAdd(termId, 'Плагины в этом терминале отключены. Phone Term — для взлома.', 'muted');
     } else if (mode === 'phone') {
       termAdd(termId, 'Commands: help · neofetch · plugins · run <id> · status · clear', 'muted');
-      termAdd(termId, 'Plugins: net link · net analyzer · phone access · mail drop · sms bomber', 'muted');
+      termAdd(termId, 'Plugins: net link · phone access · mail drop · sms bomber', 'muted');
     } else {
       termAdd(termId, 'Server Term · серверные плагины скоро · help · clear · exit', 'muted');
     }
@@ -2044,8 +2056,12 @@ async function runTerminalCommand(termId, raw) {
     const files = (g.computer?.files || []).length;
     const plugins = (g.computer?.installedPlugins || []).length;
     const storageUsed = Math.min(98, 12 + files * 2 + plugins * 3);
-    const phone = g.player?.phoneNumber || ('+7-9' + String(100000000 + (Math.abs(hashStr(g.player?.walletId||'op'))%900000000)));
-    if (!g.player.phoneNumber) { g.player.phoneNumber = phone; scheduleSave(); }
+    // deterministic local IP from seed/wallet
+    const seed = g.player?.walletId || g.meta?.seed || g.player?.nickname || 'op';
+    const h = hashStr(seed);
+    const ip = '10.' + (40 + (h % 80)) + '.' + ((h >> 8) % 200) + '.' + (2 + ((h >> 16) % 250));
+    if (!g.player.hostIp) { g.player.hostIp = ip; scheduleSave(); }
+    const hostIp = g.player.hostIp || ip;
     const ssid = net?.ssid || net?.regionId || '— offline —';
     const traffic = (20 + (Date.now()/1000|0) % 80) + ' Mbps ↓  /  ' + (5 + (Date.now()/700|0)%20) + ' Mbps ↑';
     termAdd(termId, '┌─ HOST STATUS ──────────────────', 'green');
@@ -2055,7 +2071,7 @@ async function runTerminalCommand(termId, raw) {
     termAdd(termId, '  RAM         ' + (ram.used||0) + ' / ' + (ram.total||8) + ' GB', '');
     termAdd(termId, '  DISK        ' + storageUsed + '% used · ' + (100-storageUsed) + '% free', '');
     termAdd(termId, '  SERVER      local (standalone)', '');
-    termAdd(termId, '  OP PHONE    ' + phone, '');
+    termAdd(termId, '  HOST IP     ' + hostIp, '');
     termAdd(termId, '  WALLET      ' + (g.player?.walletId || '—'), 'muted');
     termAdd(termId, '└────────────────────────────────', 'green');
     return;
@@ -2074,7 +2090,7 @@ async function runTerminalCommand(termId, raw) {
     }
     const installed = new Set((state.game.computer && state.game.computer.installedPlugins) || []);
     const all = ((typeof PLUGINS !== 'undefined' && Array.isArray(PLUGINS)) ? PLUGINS : [])
-      .filter(p => !p.terminal || p.terminal === mode || (mode === 'phone' && p.category === 'Mobile Operations'));
+      .filter(p => !p.hidden && p.id !== 'net-analyzer' && (!p.terminal || p.terminal === mode || (mode === 'phone' && p.category === 'Mobile Operations')));
     termAdd(termId, '┌─ PHONE PLUGINS ───────────────────', 'green');
     termAdd(termId, '│ id                 status     name', 'muted');
     termAdd(termId, '├────────────────────────────────────', 'muted');
@@ -2492,7 +2508,7 @@ async function animateWorkTimed(termId, pluginId, totalMs, mode) {
       if (phaseIdx > phase) {
         phase = phaseIdx;
         termAdd(termId, '  \u2500\u2500 phase ' + phases[phase] + ' \u2500\u2500', 'green');
-        await new Promise(r => setTimeout(r, 180 + Math.random() * 200));
+        await new Promise(r => setTimeout(r, 280 + Math.random() * 420));
       }
       if (tick % (st.pauseEvery || 3) === 0) {
         if (mode === 'attack') {
@@ -2514,7 +2530,7 @@ async function animateWorkTimed(termId, pluginId, totalMs, mode) {
       if (Math.floor(pct / 15) > Math.floor(lastPct / 15)) {
         termAdd(termId, '  ' + randBar(pct) + '  ' + (pct|0) + '%', 'muted');
         // micro-pause for effect
-        await new Promise(r => setTimeout(r, 90 + Math.random() * 120));
+        await new Promise(r => setTimeout(r, 160 + Math.random() * 280));
       }
       lastPct = pct;
       if (elapsed >= totalMs) {
@@ -2523,7 +2539,7 @@ async function animateWorkTimed(termId, pluginId, totalMs, mode) {
         resolve();
         return;
       }
-      setTimeout(step, 100 + Math.random() * 130);
+      setTimeout(step, 140 + Math.random() * 220);
     };
     step();
   });
@@ -2596,6 +2612,11 @@ async function animateWork(termId, pluginId) {
 
 
 async function enterPlugin(termId, pluginId) {
+  if (pluginId === 'net-analyzer') {
+    termAdd(termId, 'Net Analyzer объединён с Net Link.', 'amber');
+    termAdd(termId, 'Запусти: run net link → scan', 'muted');
+    return;
+  }
   if (isPluginLocked(pluginId) || pluginId === 'phone-control') {
     termAdd(termId, `Плагин «${pluginId}» недоступен (на доработке / заменён).`, 'error');
     if (pluginId === 'phone-control') termAdd(termId, 'Управление телефоном — приложение Phone Lab на рабочем столе.', 'muted');

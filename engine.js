@@ -125,7 +125,7 @@ export const BALANCE = {
 
 export const PLUGINS = [
   { id:'net-link', name:'Net Link', category:'Mobile Operations', version:'1.0.0', price:0, requiredLevel:1, minOs:1, ram:1, storage:40, cooldown:0, description:'Подключение терминала к региональной сети.', effect:'Текущая сеть региона.', starter:true, terminal:'phone' },
-  { id:'net-analyzer', name:'Net Analyzer', category:'Mobile Operations', version:'1.0.0', price:0, requiredLevel:1, minOs:1, ram:1, storage:80, cooldown:0, description:'Анализ региональной сети и отчёт PHONE_ID.', effect:'Отчёт устройств региона.', starter:true, terminal:'phone' },
+  { id:'net-analyzer', name:'Net Analyzer', category:'Mobile Operations', version:'1.0.0', price:0, requiredLevel:99, minOs:1, ram:1, storage:80, cooldown:0, description:'Объединён с Net Link.', effect:'Используй Net Link → scan.', starter:false, terminal:'phone', locked:true, hidden:true },
   { id:'phone-access', name:'Phone Access', category:'Mobile Operations', version:'1.0.0', price:0, requiredLevel:1, minOs:1, ram:1, storage:100, cooldown:0, description:'Доступ к телефону по PHONE_ID.', effect:'Сессия Phone Lab.', starter:true, terminal:'phone' },
   { id:'mail-drop', name:'Mail Drop', category:'Mobile Operations', version:'1.0.0', price:0, requiredLevel:1, minOs:1, ram:1, storage:60, cooldown:0, description:'Вложение для NPC через N-Mail.', effect:'Шанс раскрытия PHONE_ID.', starter:true, terminal:'phone' },
   { id:'sms-bomber', name:'SMS Bomber', category:'Mobile Operations', version:'1.0.0', price:40000, requiredLevel:1, minOs:1, ram:1, storage:40, cooldown:5000, description:'Игровая нагрузка SMS на виртуальный номер.', effect:'Симуляция спама.', starter:false, terminal:'phone' },
@@ -941,8 +941,8 @@ export function getSiteProgress(state,siteId) {
 /* —— Terminal plugin sessions / one-time operation keys —— */
 export const PLUGIN_SHELLS = {
 
-  'net-link': { boot: 'Net Link v1', help: 'connect <region_id> · disconnect · status · list · help · exit', commands: ['connect','disconnect','status','list','help','exit'] },
-  'net-analyzer': { boot: 'Net Analyzer v1', help: 'scan — анализ сети · save <имя> — полный отчёт · help · exit', commands: ['scan','analyze','save','help','exit'] },
+  'net-link': { boot: 'NET LINK // mesh bridge v2', help: 'connect <region> · scan · disconnect · status · list · help · exit', commands: ['connect','disconnect','status','list','scan','analyze','save','help','exit'] },
+  'net-analyzer': { boot: 'Net Analyzer (merged)', help: 'use net-link', commands: ['help','exit'] },
   'phone-access': { boot: 'Phone Access v2', help: 'open <PHONE_ID> · attack · block · status · disconnect · help · exit', commands: ['open','attack','block','status','disconnect','close','help','exit'] },
   'mail-drop': { boot: 'Mail Drop v1', help: 'craft <имя_файла> · attach — через N-Mail · help · exit', commands: ['craft','help','exit'] },
   'sms-bomber': { boot: 'SMS Bomber v1', help: 'bomb <PHONE_ID> · help · exit', commands: ['bomb','help','exit'] },
@@ -1743,17 +1743,44 @@ if (pluginId === 'data-exporter' && (cmd === 'export' || cmd === 'pack')) {
   if (pluginId === 'net-link') {
     if (cmd === 'list') {
       return { ok: true, lines: [
-        { text: 'REGIONS', type: 'blue' },
-        ...PHONE_REGIONS.map(r => ({ text: `${r.id} · ${r.name} · ${r.netKey}`, type: '' }))
+        { text: '┌─ REGIONS ──────────────────────', type: 'green' },
+        ...PHONE_REGIONS.map(r => ({ text: `  ${r.id.padEnd(12)} ${r.name}`, type: '' })),
+        { text: '└─ connect <id> · scan · status', type: 'muted' }
       ]};
     }
     if (cmd === 'status') {
       const n = state.phoneWorld?.network;
-      if (!n) return { ok: true, lines: [{ text: 'Не подключено. connect <region_id>', type: 'muted' }] };
-      return { ok: true, lines: [
-        { text: `Сеть: ${n.regionId}`, type: 'green' },
-        { text: `Key ${n.netKey} · SSID ${n.ssid}`, type: 'muted' }
+      if (!n) return { ok: true, lines: [
+        { text: '┌─ NET LINK STATUS', type: 'green' },
+        { text: '  STATE   offline', type: 'muted' },
+        { text: '  HINT    connect <region_id>', type: 'muted' }
       ]};
+      return { ok: true, lines: [
+        { text: '┌─ NET LINK STATUS', type: 'green' },
+        { text: '  STATE    online', type: '' },
+        { text: '  REGION   ' + n.regionId, type: '' },
+        { text: '  SSID     ' + (n.ssid || '—'), type: '' },
+        { text: '  NET KEY  ' + (n.netKey || '—'), type: 'muted' },
+        { text: '  CMDS     scan · disconnect · list', type: 'muted' }
+      ]};
+    }
+    if (cmd === 'scan' || cmd === 'analyze') {
+      if (!state.phoneWorld?.network) {
+        return { ok: false, lines: [{ text: 'Сначала connect <region_id>', type: 'error' }] };
+      }
+      const r = analyzeNetwork(state, Date.now());
+      if (!r.ok) return { ok: false, lines: [{ text: r.reason, type: 'error' }] };
+      return {
+        ok: true,
+        lines: [
+          { text: '┌─ MESH SCAN COMPLETE', type: 'green' },
+          { text: `  REGION   ${r.report.region.name}`, type: '' },
+          { text: `  VISIBLE  ${r.report.count} devices`, type: '' },
+          { text: '  Введи имя файла для отчёта:', type: 'blue' }
+        ],
+        awaitFilename: { kind: 'net-report', content: r.report.text, type: 'network-report' },
+        progressUpdated: true
+      };
     }
         if (cmd === 'disconnect') {
       if (!state.phoneWorld) state.phoneWorld = { network: null, access: {}, discovered: {} };
@@ -2581,10 +2608,7 @@ export function tryCompleteLockMissions(state, clientName) {
     m.status = 'completed';
     m.completedAt = now;
     const reward = Math.max(0, Number(m.reward) || 0);
-    if (!state.economy) state.economy = { credits: 0, transactions: [] };
-    state.economy.credits = (Number(state.economy.credits) || 0) + reward;
-    state.economy.transactions = state.economy.transactions || [];
-    state.economy.transactions.unshift({ id: 'tx_lock_' + now, type: 'income', amount: reward, reason: 'Контракт ' + m.id, at: now, note: m.title });
+    addCredits(state, reward, 'Контракт: ' + (m.title || m.id));
     if (state.player) {
       state.player.totalEarned = (Number(state.player.totalEarned) || 0) + reward;
       state.player.contractsCompleted = (Number(state.player.contractsCompleted) || 0) + 1;
@@ -2698,17 +2722,12 @@ export function processMailDeliveries(state, now = Date.now()) {
       if (!match) continue;
 
       m.status = 'completed';
+      m.completedAt = now;
       const reward = Number(m.reward) || 0;
       const xp = Number(m.xp) || 50;
-      if (!state.economy) state.economy = { balance: 0, transactions: [] };
-      state.economy.balance = (Number(state.economy.balance) || 0) + reward;
-      state.economy.transactions = state.economy.transactions || [];
-      state.economy.transactions.unshift({
-        id: 'tx_mail_' + Date.now().toString(36),
-        at: now,
-        amount: reward,
-        note: `N-Mail: ${m.title || m.id}`
-      });
+      addCredits(state, reward, `Контракт: ${m.title || m.id}`);
+      try { if (typeof grantXp === 'function') grantXp(state, xp); else { state.player.xp = (Number(state.player.xp)||0)+xp; } } catch(e){}
+      if (state.player) { state.player.totalEarned = (Number(state.player.totalEarned)||0)+reward; state.player.contractsCompleted = (Number(state.player.contractsCompleted)||0)+1; }
       if (state.player) {
         state.player.xp = (Number(state.player.xp) || 0) + xp;
         // level up soft

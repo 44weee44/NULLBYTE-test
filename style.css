@@ -1877,3 +1877,26 @@ input, textarea, select {
 .window-layer > .app-window {
   pointer-events: auto !important;
 }
+
+/* map region press */
+.map-point {
+  transition: transform 220ms cubic-bezier(.2,.8,.2,1), filter 220ms ease;
+}
+.map-point .map-label {
+  transition: transform 220ms cubic-bezier(.2,.8,.2,1), box-shadow 280ms ease, border-color 200ms, background 200ms, opacity 200ms;
+}
+.map-point:active .map-label {
+  transform: scale(0.94) translateY(1px);
+}
+.map-point.on .map-label {
+  transform: scale(1.06);
+  box-shadow: 0 0 18px #5ec8ff55, 0 4px 14px #0008;
+  animation: mapPulse 1.6s ease-in-out infinite;
+}
+@keyframes mapPulse {
+  0%, 100% { box-shadow: 0 0 10px #5ec8ff33, 0 4px 12px #0006; }
+  50% { box-shadow: 0 0 22px #5ec8ff66, 0 6px 16px #0008; }
+}
+.map-point.linked .map-label {
+  border-color: #5dcea0;
+}
