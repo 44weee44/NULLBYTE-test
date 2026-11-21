@@ -1729,13 +1729,19 @@ html,body{background:#0a0a0a!important;font-size:12px!important}
 
 /* Telegram WebView: no page swipe collapse */
 html, body {
-  position: fixed !important;
-  inset: 0 !important;
   width: 100% !important;
   height: 100% !important;
+  max-height: 100dvh !important;
+  margin: 0 !important;
   overflow: hidden !important;
   overscroll-behavior: none !important;
   touch-action: manipulation;
+  /* avoid position:fixed — it breaks iOS keyboard + input caret */
+}
+#desktopShell, .desktop-shell {
+  height: 100dvh !important;
+  max-height: 100dvh !important;
+  overflow: hidden !important;
 }
 .desktop-shell, #desktopWorkspace, .window-layer {
   overscroll-behavior: none !important;

@@ -812,7 +812,9 @@ function wireWindow(id,element) {
   }
 }
 function focusWindow(id) {
-  const win=state.opened.get(id);if(!win)return;win.minimized=false;state.active=id;state.z++;
+  const win=state.opened.get(id);if(!win)return;win.minimized=false;
+  const already = state.active === id;
+  state.active=id;state.z++;
   // Normal windows: z 20–999; always-on-top: 10000+
   const base = win.alwaysOnTop ? 10000 : 20;
   document.querySelectorAll('.app-window').forEach(w => w.classList.toggle('is-focused', w.getAttribute('data-window') === String(id)));
@@ -888,8 +890,99 @@ function refreshPhoneLab() {
     /* keep closed until user opens */
   }
 }
-function renderWindow(id) {const el=document.querySelector(`[data-window="${id}"] [data-content]`);if(!el)return;el.innerHTML=renderApp(id);wireAppContent(id,el);}
-function refreshOpenApps(ids=null) {for(const id of (ids||[...state.opened.keys()]))if(state.opened.has(id))renderWindow(id);renderTaskbar();}
+function captureWindowUi(id, el) {
+  const snap = { scroll: {}, focus: null, termCmd: null };
+  try {
+    // scroll positions
+    el.querySelectorAll('.terminal-output, .window-content, [data-content], .nb-list, .list, .ide-body, .mail-list').forEach((node, i) => {
+      if (node.scrollHeight > node.clientHeight + 2) {
+        snap.scroll[i + ':' + (node.className || node.tagName)] = node.scrollTop;
+      }
+    });
+    snap.contentScroll = el.scrollTop;
+    const active = document.activeElement;
+    if (active && el.contains(active) && (active.matches('input,textarea,select') || active.isContentEditable)) {
+      snap.focus = {
+        name: active.getAttribute('name') || '',
+        cls: active.className || '',
+        tag: active.tagName,
+        start: active.selectionStart,
+        end: active.selectionEnd,
+        value: active.value
+      };
+      if (active.classList.contains('term-inline-input') || active.name === 'command') {
+        snap.termCmd = active.value;
+      }
+    }
+  } catch (e) {}
+  return snap;
+}
+function restoreWindowUi(id, el, snap) {
+  if (!snap || !el) return;
+  try {
+    if (typeof snap.contentScroll === 'number') el.scrollTop = snap.contentScroll;
+    el.querySelectorAll('.terminal-output, .window-content, [data-content], .nb-list, .list, .ide-body, .mail-list').forEach((node, i) => {
+      const key = i + ':' + (node.className || node.tagName);
+      if (snap.scroll && snap.scroll[key] != null) node.scrollTop = snap.scroll[key];
+    });
+    // restore terminal command draft
+    if (snap.termCmd != null) {
+      const inp = el.querySelector('.term-inline-input, input[name="command"]');
+      if (inp) inp.value = snap.termCmd;
+    }
+    if (snap.focus) {
+      let target = null;
+      if (snap.focus.name) target = el.querySelector(`${snap.focus.tag.toLowerCase()}[name="${CSS.escape(snap.focus.name)}"]`);
+      if (!target && snap.focus.cls) {
+        const cls = String(snap.focus.cls).split(/\s+/).filter(Boolean)[0];
+        if (cls) target = el.querySelector('.' + CSS.escape(cls));
+      }
+      if (!target && snap.termCmd != null) target = el.querySelector('.term-inline-input, input[name="command"]');
+      if (target) {
+        target.focus({ preventScroll: true });
+        try {
+          if (typeof snap.focus.start === 'number' && target.setSelectionRange) {
+            const len = (target.value || '').length;
+            target.setSelectionRange(Math.min(snap.focus.start, len), Math.min(snap.focus.end ?? snap.focus.start, len));
+          }
+        } catch (e) {}
+      }
+    }
+  } catch (e) {}
+}
+
+function isUserTypingIn(id) {
+  const active = document.activeElement;
+  if (!active) return false;
+  if (!(active.matches?.('input,textarea,select') || active.isContentEditable)) return false;
+  const win = active.closest?.('.app-window');
+  return !!(win && win.getAttribute('data-window') === String(id));
+}
+
+function renderWindow(id, opts = {}) {
+  const el = document.querySelector(`[data-window="${id}"] [data-content]`);
+  if (!el) return;
+  // Skip destructive re-render while user types, unless forced
+  if (!opts.force && isUserTypingIn(id) && opts.soft !== false) {
+    // still allow terminal boot / explicit force
+    if (!opts.force) return;
+  }
+  const snap = captureWindowUi(id, el);
+  el.innerHTML = renderApp(id);
+  wireAppContent(id, el);
+  restoreWindowUi(id, el, snap);
+}
+
+function refreshOpenApps(ids = null, opts = {}) {
+  const list = ids || [...state.opened.keys()];
+  for (const id of list) {
+    if (!state.opened.has(id)) continue;
+    // never wipe the window the user is typing in during background ticks
+    if (!opts.force && isUserTypingIn(id)) continue;
+    renderWindow(id, opts);
+  }
+  try { renderTaskbar(); } catch (e) {}
+}
 function wireAppContent(id,el) {
   if(isTerminalId(id)){
     const term=getTerm(id);
@@ -3663,7 +3756,7 @@ function onUiAction(event){
 }
 
 document.addEventListener('click', onUiAction, false);
-document.addEventListener('pointerup', onUiAction, false);
+// pointerup intentionally NOT bound — double-fire broke inputs/scroll on mobile
 
 
 document.addEventListener('pointerdown',event=>{
@@ -3698,7 +3791,12 @@ let wasBankLocked=false;
 setInterval(()=>{
   updateClock();if(!state.game)return;
   const notices=processTimedEvents(state.game);
-  if(notices.length){notices.forEach(n=>toast(n,'success'));scheduleSave();refreshOpenApps();}
+  if(notices.length){
+    notices.forEach(n=>toast(n,'success'));
+    scheduleSave();
+    // soft refresh: skip focused inputs; only common panels
+    refreshOpenApps(['blackwire','mail','profile','map'], { soft: true });
+  }
   const bankLocked=state.game.bank.lockUntil>Date.now();
   $('systemStatus').textContent=bankLocked?'SYSTEM READY / BANK LOCKED':'SYSTEM READY';
   document.querySelectorAll('[data-bank-until]').forEach(el=>{el.textContent=humanLeft(Number(el.dataset.bankUntil)-Date.now());});
