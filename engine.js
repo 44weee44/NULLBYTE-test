@@ -490,7 +490,7 @@ export function createInitialState(tgUser=null) {
     version:SAVE_VERSION,
     meta:{createdAt:now,updatedAt:now,seed:`nb-${now.toString(36)}`,migratedFrom:null},
     meta:{seed:'nb',createdAt:Date.now(),updatedAt:Date.now()},
-    player:{nickname:'',telegramId:tgUser?.id ? String(tgUser.id) : '',level:1,xp:0,reputation:0,contractsCompleted:0,totalEarned:0,walletId:''},
+    player:{nickname:'',telegramId:tgUser?.id ? String(tgUser.id) : '',photoUrl:(tgUser?.photo_url||tgUser?.photoUrl||''),level:1,xp:0,reputation:0,contractsCompleted:0,totalEarned:0,walletId:''},
     economy:{credits:BALANCE.creditsStart,transactions:[{id:'txn-starter',type:'income',amount:BALANCE.creditsStart,reason:'Стартовый грант оператора',at:now}]},
     computer:{cpu:1,ram:1,gpu:1,storage:1,os:1,files:[],installedPlugins:['net-link','net-analyzer','phone-access','mail-drop'],uptimeStartedAt:now},
     world:{sites:SITES.map(s=>({...s,state:'online',recoveryAt:0,defenseBoost:0,revision:1})),progress:{},npc:[
@@ -597,6 +597,8 @@ export function migrateSave(raw,tgUser=null) {
   const out={...fresh,...raw,version:SAVE_VERSION};
   out.meta={...fresh.meta,...(raw.meta||{})};
   out.player={...fresh.player,...(raw.player||{})};
+  if (tgUser?.photo_url) out.player.photoUrl = String(tgUser.photo_url);
+  else if (tgUser?.photoUrl) out.player.photoUrl = String(tgUser.photoUrl);
   if(!out.player.walletId && out.player.nickname) out.player.walletId='NB-'+String(out.player.nickname).toUpperCase()+'-W1';
   out.economy={...fresh.economy,...(raw.economy||{})};
   out.computer={...fresh.computer,...(raw.computer||{})};

@@ -320,6 +320,15 @@ async function finishBoot() {
     if (state.game?.computer?.wallpaperCss) applyWallpaper(state.game.computer.wallpaperCss);
   } catch(e){}
   try {
+    const u = window.Telegram?.WebApp?.initDataUnsafe?.user;
+    if (u?.photo_url && state.game?.player) {
+      state.game.player.photoUrl = String(u.photo_url);
+    }
+    if (u?.id && state.game?.player && !state.game.player.telegramId) {
+      state.game.player.telegramId = String(u.id);
+    }
+  } catch(e){}
+  try {
     if (state.game?.player?.nickname) {
       state.game.player.nickname = String(state.game.player.nickname).replace(/[\u0000-\u001F\u007F]/g,'').slice(0,24);
     }
@@ -727,8 +736,13 @@ function onGlobalPointerMove(e){
   const win=state.opened.get(d.id);if(win){win.left=x;win.top=y;}
 }
 function onGlobalPointerUp(e){
-  if(state.drag&&(e.pointerId===undefined||e.pointerId===state.drag.pointerId)) document.querySelectorAll('.app-window.is-dragging').forEach(w=>w.classList.remove('is-dragging'));
-    state.drag=null;
+  try {
+    document.querySelectorAll('.app-window.is-dragging,.app-window.is-resizing').forEach(w=>{
+      w.classList.remove('is-dragging');
+      w.classList.remove('is-resizing');
+    });
+  } catch(err) {}
+  state.drag = null;
 }
 if(!window.__nbDragGlobal){
   window.__nbDragGlobal=true;
@@ -737,8 +751,8 @@ if(!window.__nbDragGlobal){
   document.addEventListener('pointercancel',onGlobalPointerUp);
   // Prevent Telegram WebView from swallowing vertical swipe while dragging windows
   document.addEventListener('touchmove', function(e){
-    if (state.drag) {
-      e.preventDefault();
+    if (state.drag && state.drag.id) {
+      try { e.preventDefault(); } catch(err) {}
     }
   }, { passive: false });
 }
@@ -962,11 +976,8 @@ function isUserTypingIn(id) {
 function renderWindow(id, opts = {}) {
   const el = document.querySelector(`[data-window="${id}"] [data-content]`);
   if (!el) return;
-  // Skip destructive re-render while user types, unless forced
-  if (!opts.force && isUserTypingIn(id) && opts.soft !== false) {
-    // still allow terminal boot / explicit force
-    if (!opts.force) return;
-  }
+  // Soft background refresh only: skip if user is typing in THIS window
+  if (opts.soft && isUserTypingIn(id)) return;
   const snap = captureWindowUi(id, el);
   el.innerHTML = renderApp(id);
   wireAppContent(id, el);
@@ -1107,8 +1118,14 @@ function renderProfile(g) {
   const phonesTotal = Number(st.phonesHacked || st.hackedPhones || 0);
   const phonesOk = Number(st.successfulPhoneHacks || st.successfulOperations || 0);
   const earned = Number(p.totalEarned || 0);
+  const photo = p.photoUrl || '';
+  const initial = String(p.nickname || 'OP').slice(0, 1).toUpperCase();
+  const avatar = photo
+    ? `<img class="profile-avatar-img" src="${esc(photo)}" alt="" referrerpolicy="no-referrer" decoding="async">`
+    : `<span class="profile-avatar-fallback">${esc(initial)}</span>`;
   return `<div class="app-heading"><div><div class="eyebrow">OPERATOR</div><h2>Профиль</h2></div><span class="badge green">ACTIVE</span></div>
   <section class="profile-hero">
+    <div class="profile-avatar">${avatar}</div>
     <div class="profile-ident">
       <div class="avatar">${esc((p.nickname||'OP').slice(0,2).toUpperCase())}</div>
       <div><h3>${esc(p.nickname||'operator')}</h3>
@@ -1960,8 +1977,19 @@ async function runTerminalCommand(termId, raw) {
     return;
   }
   if (c0 === 'help') {
-    termAdd(termId, 'Commands: help · neofetch · plugins · run <id> · status · clear', 'muted');
-    termAdd(termId, 'Plugins: net-link · net-analyzer · phone-access · …', 'muted');
+    const mode = getTerm(termId)?.mode || 'vanilla';
+    if (mode === 'vanilla') {
+      termAdd(termId, 'Commands: help · neofetch · status · wallpaper · clear', 'green');
+      termAdd(termId, '  wallpaper           — список обоев', 'muted');
+      termAdd(termId, '  wallpaper <id|n>    — применить обои', 'muted');
+      termAdd(termId, '  status              — сеть / RAM / диск / телефон', 'muted');
+      termAdd(termId, 'Плагины в этом терминале отключены. Phone Term — для взлома.', 'muted');
+    } else if (mode === 'phone') {
+      termAdd(termId, 'Commands: help · neofetch · plugins · run <id> · status · clear', 'muted');
+      termAdd(termId, 'Plugins: net link · net analyzer · phone access · mail drop · sms bomber', 'muted');
+    } else {
+      termAdd(termId, 'Server Term · серверные плагины скоро · help · clear · exit', 'muted');
+    }
     return;
   }
   
@@ -3075,11 +3103,12 @@ document.addEventListener('pointerdown', e => {
 }, true);
 
 function isIntentionalClick(el, ev) {
-  // only guards dense browser start tiles; everything else always OK
+  // was blocking mobile browser tiles — always allow
+  return true;
   if (!el || !el.classList || !el.classList.contains('start-tile')) return true;
   if (!_ptrTrack || !_ptrTrack.t) return true;
   const dt = Date.now() - (_ptrTrack.t || 0);
-  if (dt > 900) return true; // allow rather than block
+  if (dt > 900) return true;
   if (ev && typeof ev.clientX === 'number') {
     const dx = Math.abs(ev.clientX - _ptrTrack.x);
     const dy = Math.abs(ev.clientY - _ptrTrack.y);
@@ -3725,28 +3754,36 @@ function handleAction(action,el,ev) {
 
 function onUiAction(event){
   try {
-    // Only primary pointer / click
+    if (!event || !event.target) return;
+    // ignore non-primary mouse
     if (event.type === 'pointerup' && event.pointerType === 'mouse' && event.button !== 0) return;
     if (event.type === 'click' && event.button != null && event.button !== 0) return;
+    // while dragging window, ignore UI actions
+    if (state.drag) return;
 
     const target = event.target;
     if (!target || !target.closest) return;
+
+    // typing in pure inputs — skip (unless the input itself is the action button)
+    if (target.closest('input,textarea,select') && !target.closest('[data-action]')) return;
+
     const button = target.closest('[data-action]');
     if (!button) return;
-
-    // Don't treat pure text typing as UI action
-    if (target.closest('input,textarea,select') && !target.closest('button,[data-action]')) return;
-    if (target.matches && target.matches('input,textarea,select') && button === target) return;
+    if (button.disabled) return;
 
     const action = button.getAttribute('data-action') || button.dataset.action;
     if (!action || action === 'noop') return;
 
     const now = Date.now();
-    const key = action + '|' + (button.getAttribute('data-id')||button.getAttribute('data-app')||button.getAttribute('data-site')||'');
-    // Deduplicate click+pointerup pair and rapid double fires
-    if (onUiAction._lastKey === key && now - (onUiAction._lastAt||0) < 280) return;
+    const key = action + '|' + (button.getAttribute('data-id')||button.getAttribute('data-app')||button.getAttribute('data-site')||button.getAttribute('data-window')||'');
+    // Deduplicate pointerup + click pair
+    if (onUiAction._lastKey === key && now - (onUiAction._lastAt||0) < 320) return;
     onUiAction._lastKey = key;
     onUiAction._lastAt = now;
+
+    // stop only after we accept the action
+    try { event.preventDefault(); } catch(e) {}
+    try { event.stopPropagation(); } catch(e) {}
 
     handleAction(action, button, event);
   } catch (err) {
@@ -3756,7 +3793,7 @@ function onUiAction(event){
 }
 
 document.addEventListener('click', onUiAction, false);
-// pointerup intentionally NOT bound — double-fire broke inputs/scroll on mobile
+document.addEventListener('pointerup', onUiAction, false);
 
 
 document.addEventListener('pointerdown',event=>{
