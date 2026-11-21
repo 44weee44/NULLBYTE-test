@@ -501,8 +501,12 @@ async function startTerminalBoot(termId) {
   }
   term.busy = false;
   term.booting = false;
+  term.bootDone = true;
   const html = typeof buildNeofetchHtml === 'function' ? buildNeofetchHtml(state.game) : '';
-  if (html) termAdd(termId, '__NEOFETCH__', 'html');
+  if (html) {
+    const term2 = getTerm(termId);
+    if (term2) term2.lines.push({ text: '__NEOFETCH__', type: 'html', html });
+  }
   const hint = mode === 'phone'
     ? 'Phone Term · help · plugins · run net link'
     : mode === 'server'
@@ -729,6 +733,10 @@ if(!window.__nbDragGlobal){
 function wireWindow(id,element) {
   element.addEventListener('pointerdown',e=>{
     if(e.target.closest('.window-controls')||e.target.closest('[data-resize]'))return;
+    if(e.target.closest('input,textarea,select,.term-inline-input,.terminal-output')) {
+      focusWindow(id);
+      return;
+    }
     focusWindow(id);
   });
   const bar=element.querySelector('.window-bar');
@@ -871,16 +879,18 @@ function wireAppContent(id,el) {
     const out=el.querySelector('.terminal-output');
     if(out){
       out.addEventListener('scroll',()=>{
-        const nearBottom=(out.scrollHeight-out.scrollTop-out.clientHeight)<48;
-        if(term) term.scrollPin=nearBottom;
+        const dist = out.scrollHeight - out.scrollTop - out.clientHeight;
+        if (term) term.scrollPin = dist < 80;
       },{passive:true});
       scrollTerminalBottom(id, true);
     }
-    const form=el.querySelector('.terminal-form');
-    form?.addEventListener('submit',async e=>{
+    const form=el.querySelector('.terminal-form, form.term-inline-form');
+    if (!form) return;
+    form.addEventListener('submit',async e=>{
       e.preventDefault();
       e.stopPropagation();
       const termNow=getTerm(id);
+      if (termNow?.booting) return;
       // Allow typing/queue only when not mid-animation hard-lock — still accept commands
       const input=form.elements.command;
       const val=input?.value||'';
@@ -1709,11 +1719,11 @@ function scrollTerminalBottom(termId, force = false) {
   const out = document.querySelector(`[data-window="${termId}"] .terminal-output`);
   if (!out) return;
   const term = getTerm(termId);
-  if (!force && term && !term.scrollPin) return;
-  requestAnimationFrame(() => {
-    out.scrollTop = out.scrollHeight + 400;
-    requestAnimationFrame(() => { out.scrollTop = out.scrollHeight + 400; });
-  });
+  if (!force && term && term.scrollPin === false) return;
+  const prev = out.style.scrollBehavior;
+  out.style.scrollBehavior = 'auto';
+  out.scrollTop = out.scrollHeight;
+  out.style.scrollBehavior = prev || '';
 }
 
 
@@ -1740,6 +1750,7 @@ function resolvePluginId(rawId) {
 async function runTerminalCommand(termId, raw) {
   const term = getTerm(termId);
   if (!term) return;
+  if (term.booting) return; // no input until boot finishes
   const cmd = String(raw || '').trim();
   if (!cmd) return;
   termAdd(termId, terminalPrompt(term) + ' ' + cmd, 'prompt');
@@ -1765,7 +1776,7 @@ async function runTerminalCommand(termId, raw) {
     }
 
     // After scan etc.: next line is filename, not a command
-    if (term.booting || term.busy && term.booting) { termAdd(termId, '…boot in progress', 'warn'); return; }
+    if (term.booting) { return; }
     if (term.awaitFilename) {
       const pending = term.awaitFilename;
       term.awaitFilename = null;
@@ -1988,17 +1999,32 @@ async function runTerminalCommand(termId, raw) {
 function termAdd(termId, text, type = '') {
   const term = getTerm(termId);
   if (!term) return;
-  term.lines.push({ text, type });
-  term.lines = term.lines.slice(-200);
+  if (type === 'html') {
+    term.lines.push({ text: text || '__NEOFETCH__', type: 'html', html: arguments[3] || null });
+  } else {
+    term.lines.push({ text, type });
+  }
+  term.lines = term.lines.slice(-220);
   const out = document.querySelector(`[data-window="${termId}"] .terminal-output`);
   if (out) {
     const row = document.createElement('div');
-    row.className = 'term-line' + (type ? ' ' + type : '');
-    row.textContent = text;
-    const form = out.querySelector('.term-inline-form');
+    if (type === 'html') {
+      row.className = 'term-block';
+      row.innerHTML = (typeof buildNeofetchHtml === 'function' ? buildNeofetchHtml(state.game) : '') || '';
+    } else {
+      row.className = 'term-line' + (type ? ' ' + type : '');
+      row.textContent = text;
+    }
+    const form = out.querySelector('.term-inline-form, .term-boot-wait');
     if (form) out.insertBefore(row, form);
     else out.appendChild(row);
-    if (term.scrollPin !== false) out.scrollTop = out.scrollHeight;
+    if (term.scrollPin !== false) {
+      // instant jump — avoid smooth-scroll fight
+      const prev = out.style.scrollBehavior;
+      out.style.scrollBehavior = 'auto';
+      out.scrollTop = out.scrollHeight;
+      out.style.scrollBehavior = prev || '';
+    }
   }
 }
 
@@ -2462,24 +2488,34 @@ async function enterPlugin(termId, pluginId) {
 function renderTerminal(g, termId) {
   const term = getTerm(termId);
   const prompt = terminalPrompt(term);
+  const mode = term?.mode || 'vanilla';
   const body = (term.lines || []).map(l => {
-    if (l.type === 'html' && l.html) return `<div class="term-block">${l.html}</div>`;
+    if (l.type === 'html' && (l.html || l.text === '__NEOFETCH__')) {
+      const html = l.html || (typeof buildNeofetchHtml === 'function' ? buildNeofetchHtml(g) : '');
+      return `<div class="term-block">${html || ''}</div>`;
+    }
     return `<div class="term-line ${esc(l.type || '')}">${esc(l.text)}</div>`;
   }).join('');
   const titleUser = ((g.player && g.player.nickname) || 'user').toLowerCase().replace(/[^a-z0-9_-]/g, '') || 'user';
-  // Input sits INSIDE the scroll area, right after last line (real tty)
-  return `<div class="term-root nb-term" data-term="${esc(termId)}">
-  <div class="nb-term-titlebar">
+  const modeLabel = mode === 'phone' ? 'phone-ops' : mode === 'server' ? 'server-ops' : 'shell';
+  const booting = !!(term && (term.booting || (term.busy && term.bootStarted && !term.bootDone)));
+  // Input only after boot — no typing during load
+  const formHtml = booting
+    ? `<div class="term-boot-wait muted">⏳ boot… ввод появится после загрузки</div>`
+    : `<form class="term-inline-form terminal-form promptrow" data-term="${esc(termId)}">
+      <span class="term-inline-prompt prompt">${esc(prompt)}</span>
+      <input class="term-inline-input" name="command" type="text" autocomplete="off" spellcheck="false" autocapitalize="off" autocorrect="off" enterkeyhint="send" aria-label="Команда">
+    </form>`;
+  return `<div class="term-root nb-term term-mode-${esc(mode)}" data-term="${esc(termId)}">
+  <div class="nb-term-titlebar term-bar-${esc(mode)}">
     <img class="termglyph" src="dragon.png" alt="" draggable="false">
     <span class="title-user">${esc(titleUser)}@nullbyte-os</span>
-    <span class="path">:~</span>
+    <span class="path">:~/${esc(modeLabel)}</span>
+    <span class="term-mode-badge">${esc(modeLabel)}</span>
   </div>
   <div class="terminal-output screen" data-term-out="${esc(termId)}">
     ${body}
-    <form class="term-inline-form terminal-form promptrow" data-term="${esc(termId)}">
-      <span class="term-inline-prompt prompt">${esc(prompt)}</span>
-      <input class="term-inline-input" name="command" type="text" autocomplete="off" spellcheck="false" autocapitalize="off" enterkeyhint="send" aria-label="Команда">
-    </form>
+    ${formHtml}
   </div>
 </div>`;
 }

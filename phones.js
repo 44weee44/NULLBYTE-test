@@ -37,10 +37,12 @@ export function rotationEpoch(now = Date.now()) {
 export function visiblePhones(regionId, epoch) {
   const all = PHONE_DB[regionId] || [];
   if (!all.length) return [];
-  const n = Math.min(VISIBLE_PER_REGION, all.length);
-  // shuffle indices by epoch
+  // 200–300 from real PHONE_DB list (deterministic per region+epoch)
+  let h0 = hash32(String(regionId) + ':vis:' + String(epoch));
+  const nWant = 200 + (h0 % 101); // 200..300
+  const n = Math.min(all.length, nWant);
   const idxs = all.map((_, i) => i);
-  let h = hash32(regionId + ':' + epoch);
+  let h = h0;
   for (let i = idxs.length - 1; i > 0; i--) {
     h = (Math.imul(h, 1664525) + 1013904223) >>> 0;
     const j = h % (i + 1);

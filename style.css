@@ -1674,3 +1674,55 @@ html,body{background:#0a0a0a!important;font-size:12px!important}
   display: flex; gap: 6px; flex-wrap: wrap;
   padding: 6px 0;
 }
+
+/* scroll/input stability */
+.terminal-output, .window-content, .nb-list, .list, [data-content] {
+  scroll-behavior: auto !important;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+}
+.term-inline-input, input, textarea, select {
+  pointer-events: auto !important;
+  -webkit-user-select: text !important;
+  user-select: text !important;
+  touch-action: manipulation;
+}
+.term-boot-wait {
+  padding: 8px 4px;
+  color: #6a8;
+  font: 12px/1.4 ui-monospace, monospace;
+  opacity: .85;
+}
+.term-mode-badge {
+  margin-left: auto;
+  font: 600 10px/1 system-ui,sans-serif;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid #2a4a5c;
+  color: #8ab;
+}
+.term-mode-phone .term-mode-badge, .term-bar-phone .term-mode-badge {
+  border-color: #3d8a6a; color: #5dcea0; background: #0a1a14;
+}
+.term-mode-server .term-mode-badge, .term-bar-server .term-mode-badge {
+  border-color: #6a4a8a; color: #c9a0ff; background: #140a1a;
+}
+.term-mode-vanilla .term-mode-badge, .term-bar-vanilla .term-mode-badge {
+  border-color: #3a5a80; color: #7ec8ff; background: #0a121a;
+}
+.term-mode-phone .nb-term-titlebar { border-bottom-color: #1a3a30; }
+.term-mode-server .nb-term-titlebar { border-bottom-color: #2a1a3a; }
+.term-mode-phone .term-inline-prompt { color: #5dcea0; }
+.term-mode-server .term-inline-prompt { color: #c9a0ff; }
+.term-mode-vanilla .term-inline-prompt { color: #7ec8ff; }
+
+/* prevent content animation from reflowing scroll each render */
+[data-content] > * {
+  animation: none !important;
+}
+.app-heading {
+  animation: nbFadeUp 160ms var(--ease-out) both;
+}
