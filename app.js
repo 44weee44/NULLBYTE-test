@@ -1135,13 +1135,12 @@ function renderProfile(g) {
     ? `<img class="profile-avatar-img" src="${esc(photo)}" alt="" referrerpolicy="no-referrer" decoding="async">`
     : `<span class="profile-avatar-fallback">${esc(initial)}</span>`;
   return `<div class="app-heading"><div><div class="eyebrow">OPERATOR</div><h2>Профиль</h2></div><span class="badge green">ACTIVE</span></div>
-  <section class="profile-hero">
+  <section class="profile-hero profile-hero-row">
     <div class="profile-avatar">${avatar}</div>
     <div class="profile-ident">
-      <div><h3>${esc(p.nickname||'operator')}</h3>
-      <small>OPERATOR · LVL ${p.level}</small></div>
+      <h3 class="profile-name">${esc(p.nickname||'operator')}</h3>
+      <div class="profile-sub">Уровень ${p.level} · оператор</div>
     </div>
-    <div class="profile-rank"><b>LVL ${p.level}</b><small>ACTIVE</small></div>
   </section>
   <div class="panel section-gap">
     <div class="panel-title"><span>ОПЫТ</span><small>${fmt(p.xp)} XP</small></div>
@@ -1945,19 +1944,25 @@ async function runTerminalCommand(termId, raw) {
       // restore loaders for heavy commands
       const loadCmds = {
         'net-link': { connect: 8500, scan: 11000, analyze: 11000, disconnect: 2200 },
-        'net-analyzer': { scan: 11000, analyze: 11000 },
         'phone-access': { open: 6500, attack: 9500, block: 4000 },
-        'mail-drop': { craft: 4500, drop: 4000, send: 4000 },
+        'mail-drop': { craft: 4500 },
         'sms-bomber': { bomb: 7000 }
       };
       const ms = (loadCmds[term.plugin] && loadCmds[term.plugin][c0]) || 0;
-      if (ms > 0 && typeof animateWorkTimed === 'function') {
-        await animateWorkTimed(termId, term.plugin, ms, c0);
-      } else if (ms > 0 && typeof animateWork === 'function') {
-        await animateWork(termId, term.plugin);
+      // Validate BEFORE loader — wrong args / offline = no animation
+      if (ms > 0) {
+        const pre = runPluginShellCommand(state.game, term.plugin, cmd, { dry: true });
+        if (!pre || pre.ok === false) {
+          (pre && pre.lines || [{ text: 'Команда отклонена', type: 'error' }]).forEach(l =>
+            termAdd(termId, typeof l === 'string' ? l : (l.text || ''), (l && l.type) || 'error')
+          );
+          return;
+        }
+        if (typeof animateWorkTimed === 'function') await animateWorkTimed(termId, term.plugin, ms, c0);
+        else if (typeof animateWork === 'function') await animateWork(termId, term.plugin);
       }
 
-      const result = await runPluginShellCommand(state.game, term.plugin, cmd.toLowerCase(), Date.now());
+      const result = await runPluginShellCommand(state.game, term.plugin, cmd, Date.now());
       (result && result.lines || []).forEach(l => termAdd(termId, typeof l === 'string' ? l : (l.text || ''), (l && l.type) || ''));
       if (result && result.awaitFilename) {
         term.awaitFilename = result.awaitFilename;
@@ -2810,25 +2815,22 @@ function renderFbi() {
 function renderPhoneLab(g) {
   const pw = g.phoneWorld || {};
   const net = pw.network;
-  // offline => drop phone session
+  const clock = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+  const dateStr = new Date().toLocaleDateString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long' });
+
+  // offline
   if (!net) {
     if (state._phoneTarget || pw.activeSession || (pw.access && Object.keys(pw.access).length)) {
-      state._phoneTarget = null;
-      state.phoneUnlocked = null;
-      state.pinInput = '';
-      state.pinError = '';
-      if (g.phoneWorld) {
-        g.phoneWorld.activeSession = null;
-        g.phoneWorld.sessionFrozenSms = null;
-        g.phoneWorld.access = {};
-      }
+      state._phoneTarget = null; state.phoneUnlocked = null; state.pinInput = ''; state.pinError = '';
+      if (g.phoneWorld) { g.phoneWorld.activeSession = null; g.phoneWorld.sessionFrozenSms = null; g.phoneWorld.access = {}; }
     }
-    return `<div class="nb-phone-shell idle">
-      <div class="nb-phone-top">NULLBYTE</div>
-      <div class="nb-phone-idle"><div class="nb-lock-hex"><span class="nb-lock-icon">📡</span></div><p>OFFLINE</p><small>net-link → connect &lt;region&gt;</small></div>
-      <div class="nb-phone-footer">NET: OFFLINE</div>
-    </div>`;
+    return `<div class="titan-phone"><div class="titan-screen">
+      <div class="titan-wallpaper" data-wp="abyss"></div>
+      <div class="titan-status"><span>${clock}</span><span class="titan-status-r">▮▮▮ · 🔋</span></div>
+      <div class="titan-idle"><div class="titan-idle-icon">📡</div><p>Нет сети</p><small>net link → connect</small></div>
+    </div></div>`;
   }
+
   let activeId = state._phoneTarget || pw.activeSession?.phoneId || null;
   if (!activeId && pw.access) {
     const keys = Object.keys(pw.access);
@@ -2836,103 +2838,128 @@ function renderPhoneLab(g) {
   }
   const phone = activeId ? findPhone(activeId) : null;
   if (!phone) {
-    return `<div class="nb-phone-shell idle">
-      <div class="nb-phone-top">NULLBYTE</div>
-      <div class="nb-phone-idle"><div class="nb-lock-hex"><span class="nb-lock-icon">📱</span></div><p>Устройство не подключено</p><small>phone-access → open &lt;PHONE_ID&gt; → attack</small></div>
-      <div class="nb-phone-footer">NET: ${esc(net.regionId||'—')}</div>
-    </div>`;
+    return `<div class="titan-phone"><div class="titan-screen">
+      <div class="titan-wallpaper"></div>
+      <div class="titan-status"><span>${clock}</span><span class="titan-status-r">NET · 🔋</span></div>
+      <div class="titan-idle"><div class="titan-idle-icon">📱</div><p>Нет устройства</p><small>phone access → open → attack</small></div>
+      <div class="titan-net">${esc(net.regionId||'')}</div>
+    </div></div>`;
   }
+
   let acc = pw.access?.[phone.id] || {};
   if (!acc.unlocked && !acc.pin && !acc.attackOk) {
     const k = Object.keys(pw.access || {}).find(x => x.toUpperCase() === phone.id.toUpperCase());
     if (k) acc = pw.access[k] || acc;
   }
   if (acc.blocked) {
-    return `<div class="nb-phone-shell idle"><div class="nb-phone-top">BLOCKED</div>
-      <div class="nb-phone-idle"><div class="nb-lock-hex">⛔</div><p>${esc(phone.id)}</p></div></div>`;
+    return `<div class="titan-phone"><div class="titan-screen">
+      <div class="titan-wallpaper" data-wp="graphite"></div>
+      <div class="titan-status"><span>${clock}</span><span>⛔</span></div>
+      <div class="titan-idle"><div class="titan-idle-icon">⛔</div><p>Заблокирован</p><small>${esc(phone.id)}</small></div>
+    </div></div>`;
   }
+
   const isUnlocked = !!(acc.unlocked || state.phoneUnlocked === phone.id);
+  const pinUi = state.pinInput || '';
+
+  // LOCK + PIN (swipe up reveals pin - we show pin panel when state.phonePinOpen or always after attack)
   if (!isUnlocked) {
-    const pinUi = state.pinInput || '';
-    const dots = [0,1,2,3].map(i => `<span class="nb-pin-dot ${i < pinUi.length ? 'on' : ''}"></span>`).join('');
-    const keysHtml = ['1','2','3','4','5','6','7','8','9','del','0','ok'].map(k => {
-      if (k === 'del') return `<button type="button" class="nb-pin-key" data-action="phone-pin-del">⌫</button>`;
-      if (k === 'ok') return `<button type="button" class="nb-pin-key nb-pin-blank" disabled></button>`;
-      return `<button type="button" class="nb-pin-key" data-action="phone-pin-digit" data-digit="${k}">${k}</button>`;
+    const showPin = !!(state.phonePinOpen || (acc.pin || acc.attackOk) || pinUi.length);
+    const dots = [0,1,2,3].map(i => `<i class="titan-pin-dot ${i < pinUi.length ? 'filled' : ''}"></i>`).join('');
+    const keys = ['1','2','3','4','5','6','7','8','9','','0','del'].map(k => {
+      if (k === '') return `<span></span>`;
+      if (k === 'del') return `<button type="button" class="titan-pin-key" data-action="phone-pin-del">⌫</button>`;
+      return `<button type="button" class="titan-pin-key" data-action="phone-pin-digit" data-digit="${k}">${k}<small></small></button>`;
     }).join('');
-    const clock = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
-    return `<div class="nb-phone-shell lock">
-      <div class="nb-phone-status-row"><span>▣▣▣ SYS</span><span>🔋</span></div>
-      <div class="nb-lock-time">${clock}</div>
-      <div class="nb-lock-date">${esc(phone.ownerName)} · ${esc(phone.model)}</div>
-      <div class="nb-lock-hex"><span class="nb-lock-icon">🔒</span></div>
-      <div class="nb-lock-label">// SYSTEM SECURE //</div>
-      <div class="nb-pin-dots">${dots}</div>
-      <div class="nb-pin-pad">${keysHtml}</div>
-      ${state.pinError ? `<div class="nb-pin-err">${esc(state.pinError)}</div>` : ''}
-      <div class="nb-lock-hint">PIN после attack · 4 цифры</div>
-    </div>`;
+    return `<div class="titan-phone"><div class="titan-screen">
+      <div class="titan-wallpaper"></div>
+      <div class="titan-status"><span>${clock}</span><span class="titan-status-r">▮▮▮ 🔋</span></div>
+      <div class="titan-lock ${showPin ? 'dim' : ''}">
+        <div class="titan-lock-icon">🔒</div>
+        <div class="titan-lock-time">${clock}</div>
+        <div class="titan-lock-date">${esc(phone.ownerName)}</div>
+        <div class="titan-lock-model">${esc(phone.model||'')} · ${esc(phone.id)}</div>
+        <div class="titan-swipe" data-action="phone-pin-open"><span>свайп вверх · код</span><div class="titan-swipe-mark"></div></div>
+      </div>
+      <div class="titan-pin-panel ${showPin ? 'open' : ''}">
+        <div class="titan-pin-title">Код-пароль</div>
+        <div class="titan-pin-sub">${esc(phone.ownerName)}</div>
+        <div class="titan-pin-dots">${dots}</div>
+        ${state.pinError ? `<div class="titan-pin-err">${esc(state.pinError)}</div>` : ''}
+        <div class="titan-pin-pad">${keys}</div>
+        <button type="button" class="titan-pin-cancel" data-action="phone-pin-cancel">Отмена</button>
+      </div>
+    </div></div>`;
   }
+
+  // HOME / APPS
   const now = Date.now();
-  let msgs = [], gal = [], calls = [], contacts = [];
+  let msgs = [], gal = [], calls = [], contacts = [], files = [];
   try { msgs = (pw.sessionFrozenSms && pw.sessionFrozenSms.length) ? pw.sessionFrozenSms : phoneMessages(phone, now); } catch (e) {}
   try { registerBankFromMessages(g, phone, msgs); } catch (e) {}
   try { gal = phoneGallery(phone) || []; } catch (e) {}
   try { calls = phoneCallLog(phone, now) || []; } catch (e) {}
   try { contacts = phoneContacts(phone, now) || []; } catch (e) {}
+  try { files = phoneFiles(phone, now, state.game) || []; } catch (e) {}
+
   const tab = state.phoneLabTab || 'home';
-  let files = [];
-  try { files = phoneFiles(phone, now, state.game) || []; } catch (e) { files = []; }
-  const tabs = `<div class="nb-tabs">
-      <button type="button" class="nb-tab ${tab==='msgs'||tab==='home'?'on':''}" data-action="phone-lab-tab" data-tab="msgs">MESSAGES</button>
-      <button type="button" class="nb-tab ${tab==='calls'?'on':''}" data-action="phone-lab-tab" data-tab="calls">CALLS</button>
-      <button type="button" class="nb-tab ${tab==='gallery'?'on':''}" data-action="phone-lab-tab" data-tab="gallery">GALLERY</button>
-      <button type="button" class="nb-tab ${tab==='files'?'on':''}" data-action="phone-lab-tab" data-tab="files">FILES</button>
-    </div>`;
+  if (tab === 'home') {
+    return `<div class="titan-phone"><div class="titan-screen">
+      <div class="titan-wallpaper" data-wp="nebula"></div>
+      <div class="titan-status"><span>${clock}</span><span class="titan-status-r">▮▮▮▮ 🔋</span></div>
+      <div class="titan-home">
+        <div class="titan-home-grid">
+          <button type="button" class="titan-app" data-action="phone-lab-tab" data-tab="msgs"><span class="titan-tile titan-msgs">💬</span><span class="titan-label">Сообщения</span></button>
+          <button type="button" class="titan-app" data-action="phone-lab-tab" data-tab="calls"><span class="titan-tile titan-calls">📞</span><span class="titan-label">Звонки</span></button>
+          <button type="button" class="titan-app" data-action="phone-lab-tab" data-tab="contacts"><span class="titan-tile titan-contacts">👤</span><span class="titan-label">Контакты</span></button>
+          <button type="button" class="titan-app" data-action="phone-lab-tab" data-tab="gallery"><span class="titan-tile titan-photos">🖼️</span><span class="titan-label">Галерея</span></button>
+          <button type="button" class="titan-app" data-action="phone-lab-tab" data-tab="files"><span class="titan-tile titan-files">📁</span><span class="titan-label">Файлы</span></button>
+        </div>
+        <div class="titan-dock">
+          <button type="button" class="titan-app" data-action="phone-lab-tab" data-tab="msgs"><span class="titan-tile titan-msgs">💬</span></button>
+          <button type="button" class="titan-app" data-action="phone-lab-tab" data-tab="calls"><span class="titan-tile titan-calls">📞</span></button>
+          <button type="button" class="titan-app" data-action="phone-lab-tab" data-tab="contacts"><span class="titan-tile titan-contacts">👤</span></button>
+          <button type="button" class="titan-app" data-action="phone-lab-tab" data-tab="files"><span class="titan-tile titan-files">📁</span></button>
+        </div>
+        <div class="titan-home-indicator" data-action="phone-lab-tab" data-tab="home"></div>
+      </div>
+      <div class="titan-owner">${esc(phone.ownerName)} · ${esc(phone.id)}</div>
+    </div></div>`;
+  }
+
   let body = '';
   if (tab === 'msgs') {
-    body = `<div class="nb-list">${msgs.map(m => `<div class="nb-card"><div class="nb-card-top"><span class="nb-cyan">${esc(m.from||'SMS')}</span></div><div class="nb-card-body">${esc(m.text||'')}</div></div>`).join('')||'<div class="nb-empty">нет SMS</div>'}</div>
-      <button type="button" class="nb-action" data-action="phone-lab-export" data-kind="msgs" data-id="${esc(phone.id)}">SAVE SMS</button>`;
+    body = (msgs.map(m => `<div class="titan-card"><div class="titan-card-from">${esc(m.from||'SMS')}</div><div class="titan-card-text">${esc(m.text||'')}</div></div>`).join('') || '<div class="titan-empty">Нет сообщений</div>');
+    body += `<button type="button" class="titan-primary" data-action="phone-save-msgs" data-phone="${esc(phone.id)}">Сохранить SMS</button>`;
   } else if (tab === 'calls') {
-    body = `<div class="nb-list">${calls.map(c => `<div class="nb-card"><div class="nb-card-top"><span class="nb-pink">${esc(c.info||'')}</span><span class="nb-muted">${esc(c.date||'')} ${esc(c.time||'')}</span></div><div class="nb-card-body">${esc(c.with||'')} · ${esc(c.number||'')}</div></div>`).join('')||'<div class="nb-empty">пусто</div>'}</div>`;
+    body = (calls.map(c => `<div class="titan-card"><div class="titan-card-from">${esc(c.name||c.number||'—')}</div><div class="titan-card-text">${esc(c.info||c.dir||'')} · ${esc(c.duration||'')} · ${esc(c.at||'')}</div></div>`).join('') || '<div class="titan-empty">Нет звонков</div>');
   } else if (tab === 'contacts') {
-    body = `<div class="nb-list">${contacts.map(c => `<div class="nb-card"><div class="nb-card-top"><span class="nb-pink">${esc(c.name||'')}</span></div><div class="nb-card-body nb-cyan">${esc(c.number||'')}</div></div>`).join('')||'<div class="nb-empty">пусто</div>'}</div>
-      <button type="button" class="nb-action" data-action="phone-lab-export" data-kind="contacts" data-id="${esc(phone.id)}">SAVE CONTACTS</button>`;
+    body = (contacts.map(c => `<div class="titan-card"><div class="titan-card-from">${esc(c.name||'—')}</div><div class="titan-card-text">${esc(c.number||'')}</div></div>`).join('') || '<div class="titan-empty">Нет контактов</div>');
+    body += `<button type="button" class="titan-primary" data-action="phone-save-contacts" data-phone="${esc(phone.id)}">Сохранить контакты</button>`;
   } else if (tab === 'gallery') {
-    body = `<div class="nb-gal">${gal.map(x=>`<div class="nb-thumb"><span>${esc(x.title||'')}</span></div>`).join('')}</div>
-      <button type="button" class="nb-action" data-action="phone-lab-export" data-kind="gallery" data-id="${esc(phone.id)}">SAVE GALLERY</button>`;
+    body = `<div class="titan-photos">${(gal.map((g,i)=>`<div class="titan-photo" style="background:${esc(g.bg||g.color||'#333')}"></div>`).join('') || '')}</div>`;
+    if (!gal.length) body = '<div class="titan-empty">Пусто</div>';
   } else if (tab === 'files') {
-    body = `<div class="nb-list">${files.map(f => {
-        const price = Number(f.base_price_cr != null ? f.base_price_cr : 0) || 0;
-        const rare = f.rarity || 'common';
-        const locked = f.encryption_state === 'locked';
-        const prev = (f.content_preview || f.body || '').slice(0, 140);
-        return `<div class="nb-card file-card">
-          <div class="nb-card-top"><span class="nb-cyan">${esc(f.file_name||f.name)}</span>
-            <span class="nb-muted">${esc(rare)} · ${price} CR</span></div>
-          <div class="nb-card-body muted small">${esc(f.file_type||f.kind||'file')}${locked?' · LOCKED':''}${f.integrity_state==='corrupted'?' · CORRUPTED':''} · ${esc(f.size||'')}</div>
-          <div class="nb-card-body">${esc(prev)}${prev.length>=140?'…':''}</div>
-          <button type="button" class="nb-action tiny" data-action="phone-file-download" data-phone="${esc(phone.id)}" data-file="${esc(f.id||f.instance_id)}">СКАЧАТЬ · ${price} CR</button>
-        </div>`;
-      }).join('')||'<div class="nb-empty">нет файлов</div>'}</div>`;
-  } else {
-    body = `<div class="nb-app-grid">
-      <button type="button" class="nb-app" data-action="phone-lab-tab" data-tab="msgs"><span class="nb-app-ico nb-cyan">💬</span><label>MESSAGES</label></button>
-      <button type="button" class="nb-app" data-action="phone-lab-tab" data-tab="calls"><span class="nb-app-ico nb-pink">📞</span><label>CALLS</label></button>
-      <button type="button" class="nb-app" data-action="phone-lab-tab" data-tab="gallery"><span class="nb-app-ico nb-cyan">🖼</span><label>GALLERY</label></button>
-      <button type="button" class="nb-app" data-action="phone-lab-tab" data-tab="files"><span class="nb-app-ico nb-pink">📁</span><label>FILES</label></button>
-      <button type="button" class="nb-app" data-action="phone-lab-tab" data-tab="contacts"><span class="nb-app-ico nb-pink">👥</span><label>CONTACTS</label></button>
-    </div>`;
+    body = (files.map((f,i) => `<div class="titan-card titan-file"><div class="titan-card-from">${esc(f.name||f.file_name||'file')}</div><div class="titan-card-text">${esc(f.preview||f.file_type||'')} · ${fmt(f.base_price_cr||0)} CR</div>
+      <button type="button" class="titan-mini" data-action="phone-file-download" data-phone="${esc(phone.id)}" data-idx="${i}">Скачать</button></div>`).join('') || '<div class="titan-empty">Нет файлов</div>');
   }
-  return `<div class="nb-phone-shell unlocked">
-    <div class="nb-phone-status-row"><span>${new Date().toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'})}</span><span>▣ NULLBYTE</span><span>🔋</span></div>
-    <div class="nb-phone-brand">NULLBYTE</div>
-    <div class="nb-phone-meta">${esc(phone.ownerName)} · ${esc(phone.role||'')} · ${esc(phone.number)}</div>
-    ${tabs}
-    <div class="nb-phone-body">${body}</div>
-    <div class="nb-phone-dock"><span>SYS: SECURE</span><span>NET: ${esc(net.regionId)}</span></div>
-  </div>`;
+
+  const titles = { msgs:'Сообщения', calls:'Звонки', contacts:'Контакты', gallery:'Галерея', files:'Файлы' };
+  return `<div class="titan-phone"><div class="titan-screen">
+    <div class="titan-wallpaper" data-wp="graphite"></div>
+    <div class="titan-status"><span>${clock}</span><span class="titan-status-r">▮▮▮▮ 🔋</span></div>
+    <div class="titan-app-view">
+      <div class="titan-app-head">
+        <button type="button" class="titan-back" data-action="phone-lab-tab" data-tab="home">‹ Назад</button>
+        <div class="titan-app-title">${esc(titles[tab]||tab)}</div>
+        <span></span>
+      </div>
+      <div class="titan-app-body">${body}</div>
+      <div class="titan-home-indicator" data-action="phone-lab-tab" data-tab="home"></div>
+    </div>
+  </div></div>`;
 }
+
 
 function renderIntel(g) {
   const intel = g.intel || {};
@@ -3357,6 +3384,8 @@ function handleAction(action,el,ev) {
       renderWindow('phone');
       break;
     }
+    case 'phone-pin-open':{ state.phonePinOpen = true; renderWindow('phone'); break; }
+    case 'phone-pin-cancel':{ state.phonePinOpen = false; state.pinInput=''; state.pinError=''; renderWindow('phone'); break; }
     case 'phone-pin-del':{
       state.pinInput = String(state.pinInput || '').slice(0, -1);
       state.pinError = '';

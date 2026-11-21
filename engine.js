@@ -1310,7 +1310,11 @@ export function processServerSessionKick(state, now=Date.now()) {
 }
 
 
-export function runPluginShellCommand(state, pluginId, rawLine, missionIdHint = null) {
+export function runPluginShellCommand(state, pluginId, rawLine, missionIdHint = null, opts = {}) {
+  if (missionIdHint && typeof missionIdHint === 'object' && !Array.isArray(missionIdHint)) {
+    opts = missionIdHint; missionIdHint = null;
+  }
+  const dry = !!(opts && opts.dry);
   if (isPluginLocked(pluginId)) {
     return { ok: false, lines: [
       { text: 'NULLBYTE // UNDER CONSTRUCTION', type: 'blue' },
@@ -1768,6 +1772,7 @@ if (pluginId === 'data-exporter' && (cmd === 'export' || cmd === 'pack')) {
       if (!state.phoneWorld?.network) {
         return { ok: false, lines: [{ text: 'Сначала connect <region_id>', type: 'error' }] };
       }
+      if (dry) return { ok: true, lines: [] };
       const r = analyzeNetwork(state, Date.now());
       if (!r.ok) return { ok: false, lines: [{ text: r.reason, type: 'error' }] };
       return {
@@ -1831,7 +1836,14 @@ if (cmd === 'connect') {
 
   if (pluginId === 'phone-access') {
     if (cmd === 'open') {
-      const r = accessPhone(state, arg1 || parts[1]);
+      const pid = arg1 || parts[1];
+      if (!pid) return { ok: false, lines: [{ text: 'usage: open <PHONE_ID>', type: 'error' }] };
+      if (!state.phoneWorld?.network) return { ok: false, lines: [{ text: 'Сначала connect к сети региона', type: 'error' }] };
+      if (dry) {
+        // light existence check happens in accessPhone; dry skips mutate
+        return { ok: true, lines: [] };
+      }
+      const r = accessPhone(state, pid);
       if (!r.ok) return { ok: false, lines: [{ text: r.reason, type: 'error' }] };
       state._phoneTarget = r.phone.id;
       return { ok: true, lines: [
@@ -1957,7 +1969,7 @@ if (cmd === 'connect') {
   }
 
   if (pluginId === 'mail-drop' && cmd === 'craft') {
-    const name = arg1 || 'drop';
+    if (dry) return { ok: true, lines: [] };
     const token = 'MD-' + Math.abs((Date.now() * 7) % 1e9).toString(36).toUpperCase();
     const content = [
       'NULLBYTE MAIL-DROP',
@@ -1965,10 +1977,15 @@ if (cmd === 'connect') {
       'hint=attach_and_send_via_nmail',
       'window=5s..10m after delivery'
     ].join('\n');
-    return { ok: true, lines: [
-      { text: 'Mail-drop payload ready · ' + token, type: 'green' },
-      { text: 'save <имя> → N-Mail → кому: имя владельца телефона → вложение → отправить', type: 'muted' }
-    ], pendingSave: { kind: 'mail-drop', content, defaultName: name, type: 'mail-drop', encrypted: false, meta: { token } } };
+    return {
+      ok: true,
+      lines: [
+        { text: 'Mail-drop payload ready · ' + token, type: 'green' },
+        { text: 'Введи имя файла для сохранения:', type: 'blue' }
+      ],
+      awaitFilename: { kind: 'mail-drop', content, type: 'mail-drop', meta: { token } },
+      progressUpdated: true
+    };
   }
   if (pluginId === 'mail-drop' && (cmd === 'status' || cmd === 'list')) {
     const drops = state.phoneWorld?.pendingDrops || [];
